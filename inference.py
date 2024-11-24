@@ -55,7 +55,7 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
 def inference(url, args, pruning_threshold=0.5):
     nmodel = nnModel(url, args)
     box_set = []
-    num_boxes = 1
+    num_boxes = 30
     
     for _ in range(num_boxes):
         box = generate_real_time_box()
