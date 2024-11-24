@@ -21,17 +21,17 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
     start = perf_counter()
     while True:
         box_list = env.box_creator.preview(preview_num)
-        print("\nBox list:", box_list)
+        # print("\nBox list:", box_list)
         
         tree = ReorderTree(nmodel, box_list, env, times=100)
         act, val, default = tree.reorder_search()
         obs, _, done, info = env.step([act])
         
         # 在每次放置后输出最新放置的盒子信息
-        if env.space.boxes:  # 确保有盒子被放置
-            latest_box = env.space.boxes[-1]
-            print(f"Just placed box: x={latest_box.x}, y={latest_box.y}, z={latest_box.z}, "
-                  f"lx={latest_box.lx}, ly={latest_box.ly}, lz={latest_box.lz}")
+        # if env.space.boxes:  # 确保有盒子被放置
+        #     latest_box = env.space.boxes[-1]
+        #     print(f"Just placed box: x={latest_box.x}, y={latest_box.y}, z={latest_box.z}, "
+        #           f"lx={latest_box.lx}, ly={latest_box.ly}, lz={latest_box.lz}")
 
         box_counter += 1
         default_counter += int(default)
@@ -45,6 +45,11 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
             boxes_for_vis = []
             for box in env.space.boxes:
                 boxes_for_vis.append((box.x, box.y, box.z, box.lx, box.ly, box.lz))
+            
+            # 输出所有盒子的信息及其放置位置
+            print("\nFinal box positions:")
+            for i, box in enumerate(env.space.boxes):
+                print(f"Box {i}: x={box.x}, y={box.y}, z={box.z}, lx={box.lx}, ly={box.ly}, lz={box.lz}")
             
             # 调用可视化函数
             import Visualization
