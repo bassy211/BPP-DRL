@@ -4,7 +4,7 @@ import copy
 import gym
 from .cutCreator import CuttingBoxCreator
 from .mdCreator  import MDlayerBoxCreator
-from .binCreator import MeBoxCreator, RandomBoxCreator, LoadBoxCreator, BoxCreator
+from .binCreator import RandomBoxCreator, LoadBoxCreator, BoxCreator
 
 class PackingGame(gym.Env):
     def __init__(self, box_creator=None, container_size = (20, 20, 20),
@@ -16,7 +16,7 @@ class PackingGame(gym.Env):
         self.space = Space(*self.bin_size)
         self.can_rotate = enable_rotation
 
-        if not test and box_creator is None:
+        if not test and box_creator and infer is None:
             assert box_set is not None
             if data_type == 'rs':
                 print('using random data')
@@ -32,11 +32,11 @@ class PackingGame(gym.Env):
                 self.box_creator = MDlayerBoxCreator(container_size, [box_set[0][0], box_set[-1][0]])
             assert isinstance(self.box_creator, BoxCreator)
 
-        if infer:   #TODO: 优化代码
+        if infer: 
             if box_set is None:
                 raise ValueError("box_set cannot be None when infer=True")
             print('Using MeBoxCreator for inference')
-            self.box_creator = MeBoxCreator(box_set)
+            self.box_creator = RandomBoxCreator(box_set)
 
         if test:
             self.box_creator = LoadBoxCreator(data_name)

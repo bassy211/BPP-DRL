@@ -70,7 +70,7 @@ def inference(url, args, pruning_threshold=0.5):
                    box_set=box_set,
                    container_size=args.container_size,
                    enable_rotation=args.enable_rotation,
-                   infer=True,data_type='rs')           
+                   infer=True)           
 
     print('Env name: ', args.env_name)
     print('Model url: ', url)
