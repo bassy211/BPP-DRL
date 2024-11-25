@@ -50,7 +50,7 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
             # 输出所有盒子的信息及其放置位置
             print("\nFinal box positions:")
             for i, box in enumerate(env.space.boxes):
-                print(f"Box {i}: x={box.x}, y={box.y}, z={box.z}, lx={box.lx}, ly={box.ly}, lz={box.lz}")
+                print(f"Box {i+1}: x={box.x}, y={box.y}, z={box.z}, lx={box.lx}, ly={box.ly}, lz={box.lz}")
             Visualization.visualize_boxes(container_size=(10, 10, 10), boxes=boxes_for_vis)
             
             return info['ratio'], info['counter'], end - start, default_counter / box_counter
