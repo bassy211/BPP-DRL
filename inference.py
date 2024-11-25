@@ -5,6 +5,7 @@ import gym
 import copy
 from acktr.arguments import get_args
 import random
+import Visualization
 
 def generate_real_time_box():
     depth = random.randint(2, 5)
@@ -50,9 +51,6 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
             print("\nFinal box positions:")
             for i, box in enumerate(env.space.boxes):
                 print(f"Box {i}: x={box.x}, y={box.y}, z={box.z}, lx={box.lx}, ly={box.ly}, lz={box.lz}")
-            
-            # 调用可视化函数
-            import Visualization
             Visualization.visualize_boxes(container_size=(10, 10, 10), boxes=boxes_for_vis)
             
             return info['ratio'], info['counter'], end - start, default_counter / box_counter
