@@ -16,7 +16,7 @@ class PackingGame(gym.Env):
         self.space = Space(*self.bin_size)
         self.can_rotate = enable_rotation
 
-        if not test and box_creator and infer is None:
+        if not test and not infer and box_creator is None:
             assert box_set is not None
             if data_type == 'rs':
                 print('using random data')
