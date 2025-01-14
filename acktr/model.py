@@ -279,6 +279,24 @@ class CNNPro(NNBase):
             init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
             nn.ReLU(),
         )
+        # self.share = nn.Sequential(
+        # # 第一层膨胀卷积，膨胀率=1
+        # init_(nn.Conv2d(args.channel, 64, 3, stride=1, padding=1, dilation=1)),
+        # nn.ReLU(),
+        # # 第二层膨胀卷积，膨胀率=2
+        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=2, dilation=2)),
+        # nn.ReLU(),
+        # # 第三层膨胀卷积，膨胀率=4
+        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=4, dilation=4)),
+        # nn.ReLU(),
+        # # 第四层膨胀卷积，膨胀率=8
+        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=8, dilation=8)),
+        # nn.ReLU(),
+        # # 第五层膨胀卷积，膨胀率=1（最后一层使用标准卷积）
+        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=1, dilation=1)),
+        # nn.ReLU(),
+        # )
+
         pred_len = args.container_size[0] * args.container_size[1]
         if args.enable_rotation:
             pred_len = pred_len * 2
