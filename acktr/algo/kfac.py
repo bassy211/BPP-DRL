@@ -144,6 +144,8 @@ class KFACOptimizer(optim.Optimizer):
             lr=self.lr * (1 - self.momentum),
             momentum=self.momentum)
 
+        self.eps = 1e-6  # 添加数值稳定性参数
+
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.Ts == 0:
             classname = module.__class__.__name__
@@ -212,8 +214,9 @@ class KFACOptimizer(optim.Optimizer):
 
                 self.d_g[m], self.Q_g[m] = torch.linalg.eigh(
                     self.m_gg[m])
+                matrix = self.m_aa[m] + torch.eye(self.m_aa[m].size(0)).to(self.m_aa[m].device) * self.eps
                 self.d_a[m], self.Q_a[m] = torch.linalg.eigh(
-                    self.m_aa[m])
+                    matrix)
 
                 self.d_a[m].mul_((self.d_a[m] > 1e-6).float())
                 self.d_g[m].mul_((self.d_g[m] > 1e-6).float())

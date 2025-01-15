@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from acktr.distributions import Bernoulli, Categorical, DiagGaussian
 from acktr.utils import init
 import sys
@@ -262,45 +263,56 @@ class MLPBase(NNBase):
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs
 
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(ResBlock, self).__init__()
+        
+        # 使用Layer Normalization替代Batch Normalization
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
+        
+        # shortcut连接
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=True)
+            )
+
+        # 初始化
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), nn.init.calculate_gain('relu'))
+        self.conv1 = init_(self.conv1)
+        self.conv2 = init_(self.conv2)
+        if len(self.shortcut) > 0:
+            self.shortcut[0] = init_(self.shortcut[0])
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = self.conv2(out)
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
 class CNNPro(NNBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=256, args = None):
         super(CNNPro, self).__init__(recurrent, num_inputs, hidden_size, args)
-        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), nn.init.calculate_gain('relu'))
         self.args = args
+        
+        # ResNet结构更新
         self.share = nn.Sequential(
-            init_(nn.Conv2d(args.channel, 64, 3, stride=1, padding=1)),
+            nn.Conv2d(args.channel, 64, kernel_size=3, stride=1, padding=1, bias=True),
             nn.ReLU(),
-            init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
-            nn.ReLU(),
-            init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
-            nn.ReLU(),
-            init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
-            nn.ReLU(),
-            init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
-            nn.ReLU(),
+            ResBlock(64, 64),
+            ResBlock(64, 64),
+            ResBlock(64, 64),
+            ResBlock(64, 64)
         )
-        # self.share = nn.Sequential(
-        # # 第一层膨胀卷积，膨胀率=1
-        # init_(nn.Conv2d(args.channel, 64, 3, stride=1, padding=1, dilation=1)),
-        # nn.ReLU(),
-        # # 第二层膨胀卷积，膨胀率=2
-        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=2, dilation=2)),
-        # nn.ReLU(),
-        # # 第三层膨胀卷积，膨胀率=4
-        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=4, dilation=4)),
-        # nn.ReLU(),
-        # # 第四层膨胀卷积，膨胀率=8
-        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=8, dilation=8)),
-        # nn.ReLU(),
-        # # 第五层膨胀卷积，膨胀率=1（最后一层使用标准卷积）
-        # init_(nn.Conv2d(64, 64, 3, stride=1, padding=1, dilation=1)),
-        # nn.ReLU(),
-        # )
 
         pred_len = args.container_size[0] * args.container_size[1]
         if args.enable_rotation:
             pred_len = pred_len * 2
             
+        # 使用新定义的init_
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), nn.init.calculate_gain('relu'))
         self.mask = nn.Sequential(
             init_(nn.Conv2d(64, 8, 1, stride=1)),
             nn.ReLU(),
@@ -309,12 +321,11 @@ class CNNPro(NNBase):
             nn.ReLU(),
             init_(nn.Linear(hidden_size, pred_len)),
             nn.ReLU(),
-            # nn.Sigmoid(),
         )
 
         self.actor = nn.Sequential(
             init_(nn.Conv2d(64, 8, 1, stride=1)),
-            nn.ReLU(),
+            nn.ReLU(), 
             Flatten(),
             init_(nn.Linear(8*args.pallet_size*args.pallet_size, hidden_size)),
             nn.ReLU(),
@@ -327,10 +338,12 @@ class CNNPro(NNBase):
             init_(nn.Linear(4*args.pallet_size*args.pallet_size, hidden_size)),
             nn.ReLU(),
         )
+        
         self.critic_linear = init_(nn.Linear(hidden_size, 1))
         self.train()
 
     def forward(self, inputs, rnn_hxs, masks):
+        # ...保持forward方法不变...
         x = inputs.reshape((-1,self.args.channel,self.args.pallet_size,self.args.pallet_size))
         assert not self.is_recurrent
         share = self.share(x)
