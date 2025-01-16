@@ -60,10 +60,10 @@ def get_args():
         '--hidden_size', default=256, type=int,  help='hidden layer cell number (default: 256)'
     )
     parser.add_argument(
-        '--learning_rate', default=1e-7, type=float,  help='learning rate for a2c (default: 1e-7)'
+        '--learning_rate', default=1e-6, type=float,  help='learning rate for a2c (default: 1e-6)'
     )
     parser.add_argument(
-        '--eps', default=1e-4, type=float,  help='RMSprop optimizer epsilon (default: 1e-4)'
+        '--eps', default=1e-5, type=float,  help='RMSprop optimizer epsilon (default: 1e-5)'
     )
     parser.add_argument(
         '--alpha', default=0.99, type=float,  help='RMSprop optimizer apha (default: 0.99)'

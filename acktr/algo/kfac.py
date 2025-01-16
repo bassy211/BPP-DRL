@@ -214,6 +214,8 @@ class KFACOptimizer(optim.Optimizer):
 
                 self.d_g[m], self.Q_g[m] = torch.linalg.eigh(
                     self.m_gg[m])
+                # self.d_a[m], self.Q_a[m] = torch.linalg.eigh(
+                #     self.m_aa[m])
                 matrix = self.m_aa[m] + torch.eye(self.m_aa[m].size(0)).to(self.m_aa[m].device) * self.eps
                 self.d_a[m], self.Q_a[m] = torch.linalg.eigh(
                     matrix)
