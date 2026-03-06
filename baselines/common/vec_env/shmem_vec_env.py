@@ -135,6 +135,9 @@ def _subproc_worker(pipe, parent_pipe, env_fn_wrapper, obs_bufs, obs_shapes, obs
                 break
             else:
                 raise RuntimeError('Got unrecognized cmd %s' % cmd)
+    except EOFError:
+        # Parent process closed the pipe (normal during shutdown/crash).
+        pass
     except KeyboardInterrupt:
         print('ShmemVecEnv worker: got KeyboardInterrupt')
     finally:

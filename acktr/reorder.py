@@ -1,8 +1,6 @@
 import numpy as np
 import copy
-import gym
 import math
-import itertools
 
 class Node(object):
     def __init__(self, parent, number, height):
@@ -65,51 +63,50 @@ class ReorderTree(object):
         # the shape of the action mask
         self.mask_shape = env.bin_size[:2]
         self.mask_len = self.mask_shape[0] * self.mask_shape[1]
-        # copy the env and box list
-        self.env = copy.deepcopy(env)
-        self.box_list = copy.deepcopy(box_list)
+        # keep env reference; copy only when simulation is really needed
+        self.env = env
+        self.box_list = list(box_list)
         # threshold
         self.p_bound = p_bound
         self.v_bound = v_bound
-        self.pos_num = int(1 / self.p_bound)
+        self.pos_num = max(1, int(1 / self.p_bound))
         self.times = min(times, math.factorial(self.box_num - 1))
+        self.eval_cache = {}
 
     def get_order_mask(self, smask, box_size):
-        emask = copy.deepcopy(smask)
-        emask = emask.reshape(self.mask_shape)
+        emask = np.array(smask, copy=True).reshape(self.mask_shape)
+        smask_2d = np.asarray(smask).reshape(self.mask_shape)
         ex = emask.shape[0] - box_size[0] + 1
         ey = emask.shape[1] - box_size[1] + 1
         for i in range(ex):
             for j in range(ey):
                 if emask[i][j] == 1:
-                    if smask.reshape(self.mask_shape)[i:i + box_size[0], j:j + box_size[1]].min() == 0:
+                    if smask_2d[i:i + box_size[0], j:j + box_size[1]].min() == 0:
                         emask[i][j] = 0
         return emask.reshape(-1)
 
     def get_mixed_mask(self, masks, real_idx, box_size, raw_mask):
-        action_mask = copy.deepcopy(raw_mask).astype(np.int32)
-        ######
-        stacked_mask = np.ones_like(masks[0])
-        for i in range(real_idx + 1, self.box_num):
-            stacked_mask = (stacked_mask == 1) & (masks[i] == 1)
-        stacked_mask = stacked_mask.astype(np.int32)
+        action_mask = np.asarray(raw_mask, dtype=np.int32).copy()
+        if real_idx + 1 < self.box_num:
+            stacked_mask = np.all(masks[real_idx + 1:] == 1, axis=0).astype(np.int32)
+        else:
+            stacked_mask = np.ones_like(masks[0], dtype=np.int32)
         order_mask = self.get_order_mask(stacked_mask, box_size)
-        ######
         mixed_mask = (action_mask == 1) & (order_mask == 1)
         mixed_mask = mixed_mask.astype(np.int32)
         return mixed_mask
 
     def get_mixed_obs(self, masks, real_idx, raw_obs):
         max_height = self.env.bin_size[-1]
-        new_obs = copy.deepcopy(raw_obs).reshape(self.env.bin_size[:2])
-        new_obs = new_obs.reshape(-1)
-        for i in range(real_idx+1, self.box_num):
-            new_obs = max_height * (1 - masks[i]) + new_obs * masks[i]
+        new_obs = np.asarray(raw_obs).reshape(-1).copy()
+        if real_idx + 1 < self.box_num:
+            stacked_mask = np.all(masks[real_idx + 1:] == 1, axis=0).astype(new_obs.dtype)
+            new_obs = max_height * (1 - stacked_mask) + new_obs * stacked_mask
         return new_obs
 
     def update_mask(self, mask, box, pos):
         pos = (pos // self.mask_shape[1], pos % self.mask_shape[1])
-        cmask = copy.deepcopy(mask).reshape(self.mask_shape)
+        cmask = np.asarray(mask).reshape(self.mask_shape).copy()
         cmask[pos[0]:pos[0] + box[0], pos[1]:pos[1] + box[1]] = 0
         return cmask.reshape(-1)
 
@@ -123,20 +120,32 @@ class ReorderTree(object):
 
     def evaluate(self, obs, masks, real_idx):
         # 4 channels
-        revised_obs = copy.deepcopy(obs).reshape(4,-1)
-        raw_obs = copy.deepcopy(revised_obs[0])
+        revised_obs = np.asarray(obs).reshape(4, -1).copy()
+        raw_obs = revised_obs[0]
         new_obs = self.get_mixed_obs(masks, real_idx, raw_obs)
         revised_obs[0] = new_obs
         revised_obs = revised_obs.reshape((-1,))
-        val, poss = self.nmodel.evaluate(revised_obs)
-        pos_candidates = list(np.argsort(poss)[-self.pos_num:])
+
+        cache_key = (real_idx, revised_obs.tobytes())
+        cached = self.eval_cache.get(cache_key, None)
+        if cached is None:
+            val, poss = self.nmodel.evaluate(revised_obs)
+            poss = np.asarray(poss).reshape(-1)
+            self.eval_cache[cache_key] = (float(val), poss)
+        else:
+            val, poss = cached
+
+        k = min(self.pos_num, poss.shape[0])
+        topk_idx = np.argpartition(poss, -k)[-k:]
+        topk_sorted = topk_idx[np.argsort(poss[topk_idx])]
+        pos_candidates = list(topk_sorted)
         wt = self.will_terminate(new_obs)
         return val, pos_candidates, wt
 
     def search(self, masks, cur_env, res_idxs, cur_node, cur_value, action):
         assert cur_node is not None
         # print('DISNUM: ', cur_node.dis_num)
-        next_eval = 0
+        next_eval = -1e18
         next_node = None
         # print(res_idxs)
 
@@ -208,26 +217,24 @@ class ReorderTree(object):
                 return
 
         # copy and update [res_idxs]
-        next_idxs = res_idxs
-        next_idxs.remove(idx)
-        # copy and update [env]
-        # assert not done
-        # copy and update [mask]
-        next_masks = masks
-        next_masks[idx] = self.update_mask(next_masks[idx], cur_box, pos)
+        next_idxs = [i for i in res_idxs if i != idx]
+
+        # In-place mask update + rollback to avoid full copy in recursion
+        old_mask = masks[idx].copy()
+        masks[idx] = self.update_mask(masks[idx], cur_box, pos)
         # next value
         next_value = cur_value + reward
         # recursion
         if action is None and idx == 0:
             action = pos
-        self.search(next_masks, cur_env, next_idxs, next_node, next_value, action)
+        self.search(masks, cur_env, next_idxs, next_node, next_value, action)
+        masks[idx] = old_mask
 
     def get_baseline(self):
         env = copy.deepcopy(self.env)
         obs = env.cur_observation
         nor_exp = 0
         nor_act = None
-        area = self.mask_len
         for i in range(self.box_num):
             val, poss = self.nmodel.evaluate(obs)
             act = np.argmax(poss)
@@ -243,15 +250,34 @@ class ReorderTree(object):
             nor_exp += reward
 
     def reorder_search(self):
+        # Fast path: when only one simulation is requested, tree rollout + baseline
+        # overhead dominates. Use single-step greedy directly.
+        if self.times <= 1 or self.box_num <= 1:
+            val, poss = self.nmodel.evaluate(self.env.cur_observation)
+            act = int(np.argmax(poss))
+            return act, float(val), True
+
+        self.eval_cache.clear()
         nor_exp, nor_act = self.get_baseline()
         root = Node(None, None, self.box_num - 1)
         root.max_value = nor_exp 
         root.action = nor_act
+        best_value = nor_exp
+        no_improve_rounds = 0
+        patience = 4
         for i in range(self.times):
             sim_env = copy.deepcopy(self.env)
             res_idxs = list(range(self.box_num))
-            masks = np.ones((self.box_num, self.mask_len))
+            masks = np.ones((self.box_num, self.mask_len), dtype=np.int8)
             self.search(masks, sim_env, res_idxs, root, 0, None)
+            if root.max_value is not None and root.max_value > best_value + 1e-8:
+                best_value = root.max_value
+                no_improve_rounds = 0
+            else:
+                no_improve_rounds += 1
+
+            if no_improve_rounds >= patience and root.action is not None:
+                break
         max_exp = root.max_value
         max_act = root.action
         if max_act != nor_act and max_exp - nor_exp < self.v_bound:

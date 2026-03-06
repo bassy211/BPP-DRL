@@ -1,4 +1,5 @@
 from .space import Space
+from acktr.utils import generate_candidate_map
 import numpy as np
 import copy
 import gym
@@ -89,6 +90,12 @@ class PackingGame(gym.Env):
             for j in range(length-y+1):
                 if self.space.check_box(plain, x, y, i, j, z) >= 0:
                     action_mask[i, j] = 1
+
+        candidate_map = generate_candidate_map(plain)
+        if candidate_map.sum() > 0:
+            filtered_mask = action_mask * candidate_map
+            if filtered_mask.sum() > 0:
+                action_mask = filtered_mask
 
         if action_mask.sum() == 0:
             action_mask[:, :] = 1

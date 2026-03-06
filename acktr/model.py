@@ -267,8 +267,27 @@ class CNNPro(NNBase):
         super(CNNPro, self).__init__(recurrent, num_inputs, hidden_size, args)
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), nn.init.calculate_gain('relu'))
         self.args = args
+
+        # Container state: height map + gradients along X/Y
+        self.container_channels = 3
+
+        # Item branch: 2 FC layers -> aligned feature map -> multiplicative fusion
+        self.item_fc1 = nn.Sequential(
+            init_(nn.Linear(3, hidden_size)),
+            nn.ReLU(),
+        )
+        self.item_fc2 = nn.Sequential(
+            init_(nn.Linear(hidden_size, args.pallet_size * args.pallet_size)),
+            nn.ReLU(),
+        )
+        self.item_conv = nn.Sequential(
+            init_(nn.Conv2d(1, 2, 3, stride=1, padding=1)),
+            nn.ReLU(),
+        )
+
+        # Stack container features (3 ch) and item features (2 ch) -> 5 channels
         self.share = nn.Sequential(
-            init_(nn.Conv2d(args.channel, 64, 3, stride=1, padding=1)),
+            init_(nn.Conv2d(5, 64, 3, stride=1, padding=1)),
             nn.ReLU(),
             init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
             nn.ReLU(),
@@ -282,17 +301,7 @@ class CNNPro(NNBase):
         pred_len = args.container_size[0] * args.container_size[1]
         if args.enable_rotation:
             pred_len = pred_len * 2
-            
-        self.mask = nn.Sequential(
-            init_(nn.Conv2d(64, 8, 1, stride=1)),
-            nn.ReLU(),
-            Flatten(),
-            init_(nn.Linear(8*args.pallet_size*args.pallet_size, hidden_size)),
-            nn.ReLU(),
-            init_(nn.Linear(hidden_size, pred_len)),
-            nn.ReLU(),
-            # nn.Sigmoid(),
-        )
+        self.pred_len = pred_len
 
         self.actor = nn.Sequential(
             init_(nn.Conv2d(64, 8, 1, stride=1)),
@@ -313,11 +322,35 @@ class CNNPro(NNBase):
         self.train()
 
     def forward(self, inputs, rnn_hxs, masks):
-        x = inputs.reshape((-1,self.args.channel,self.args.pallet_size,self.args.pallet_size))
+        x = inputs.reshape((-1, self.args.channel, self.args.pallet_size, self.args.pallet_size))
         assert not self.is_recurrent
-        share = self.share(x)
+
+        # Parse raw inputs: [hmap, item_x_plane, item_y_plane, item_z_plane]
+        hmap = x[:, 0:1, :, :]
+        item_dims = torch.stack(
+            (x[:, 1, 0, 0], x[:, 2, 0, 0], x[:, 3, 0, 0]),
+            dim=1
+        )
+
+        # Container gradients along X/Y
+        grad_x = torch.zeros_like(hmap)
+        grad_y = torch.zeros_like(hmap)
+        grad_x[:, :, 1:, :] = hmap[:, :, 1:, :] - hmap[:, :, :-1, :]
+        grad_y[:, :, :, 1:] = hmap[:, :, :, 1:] - hmap[:, :, :, :-1]
+        container_feat = torch.cat((hmap, grad_x, grad_y), dim=1)
+
+        # Item branch and multiplicative fusion with height map
+        item_latent = self.item_fc1(item_dims)
+        item_map = self.item_fc2(item_latent).view(-1, 1, self.args.pallet_size, self.args.pallet_size)
+        fused_item_map = item_map * hmap
+        item_feat = self.item_conv(fused_item_map)
+
+        fusion = torch.cat((container_feat, item_feat), dim=1)
+        share = self.share(fusion)
         hidden_critic = self.critic(share)
         hidden_actor = self.actor(share)
-        pred_mask = self.mask(share)
+
+        # Keep interface compatibility; mask prediction head is not used.
+        pred_mask = torch.zeros((x.size(0), self.pred_len), device=x.device, dtype=x.dtype)
         cl = self.critic_linear(hidden_critic)
         return cl, hidden_actor, rnn_hxs, pred_mask

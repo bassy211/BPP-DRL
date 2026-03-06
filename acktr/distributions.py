@@ -46,16 +46,11 @@ bernoulli_entropy = FixedBernoulli.entropy
 FixedBernoulli.entropy = lambda self: bernoulli_entropy(self).sum(-1)
 FixedBernoulli.mode = lambda self: torch.gt(self.probs, 0.5).float()
 
-# remove the mask
+# invalid action masking
 def mask_softmax(mat, mask, dim=-1):
     mask = mask.float()
-    mat = mat + mask * 1e4
-    mat_max = torch.max(mat, dim=dim, keepdim=True)[0].detach()
-    mat_exp = torch.exp(mat - mat_max)
-    mat_exp = mat_exp * mask
-    mat_sum = torch.sum(mat_exp, dim=dim, keepdim=True)
-    mat_softmax = mat_exp / mat_sum
-    return mat_softmax
+    masked_logits = mat.masked_fill(mask <= 0, -1e9)
+    return F.softmax(masked_logits, dim=dim)
 
 class Categorical(nn.Module):
 
@@ -71,12 +66,20 @@ class Categorical(nn.Module):
     def forward(self, x, mask):
         x = self.linear(x)
 
-        p_ones = torch.ones_like(x)
+        mask = mask.float()
         ones = torch.ones_like(mask)
         inver_mask = ones - mask
 
-        lx = F.softmax(x - inver_mask * 14, dim=-1)
-        lx = lx + 1e-5
+        # Valid/potential placements keep original score.
+        # Non-potential or invalid placements are replaced by -inf.
+        masked_logits = x.masked_fill(mask <= 0, -1e9)
+        lx = F.softmax(masked_logits, dim=-1)
+
+        # avoid NaN when a full row in mask is zero
+        all_zero = (mask.sum(dim=-1, keepdim=True) == 0)
+        if all_zero.any():
+            fallback = F.softmax(x, dim=-1)
+            lx = torch.where(all_zero, fallback, lx)
 
         # branch 2
         # choose vaild actions

@@ -19,11 +19,11 @@ def get_args():
         '--load-model', action='store_true', default=False,  help='Whether to use trained model'
     )
     parser.add_argument(
-        '--load-name', default='default_cut_2.pt', 
+        '--load-name', default='default_cut_1.pt', 
         help='The name of trained model, you can put new trained model in it'
     )
     parser.add_argument(
-        '--data-name', default='cut_2.pt',
+        '--data-name', default='cut_1.pt',
         help='The name of testing dataset'
     )
     parser.add_argument(
@@ -51,7 +51,7 @@ def get_args():
         '--entropy_coef', default=0.01, type=float,  help='entropy term coefficient (default: 0.01)'
     )
     parser.add_argument(
-        '--value_loss_coef', default=0.5, type=float,  help='value loss coefficient (default: 0.5)'
+        '--value_loss_coef', default=1.0, type=float,  help='value loss coefficient (default: 1.0)'
     )
     parser.add_argument(
         '--invalid_coef', default=2, type=float,  help='invalid action possibility term coefficient'
@@ -60,7 +60,7 @@ def get_args():
         '--hidden_size', default=256, type=int,  help='hidden layer cell number (default: 256)'
     )
     parser.add_argument(
-        '--learning_rate', default=1e-6, type=float,  help='learning rate for a2c (default: 1e-6)'
+        '--learning_rate', default=7e-4, type=float,  help='learning rate for a2c (default: 1e-6)'
     )
     parser.add_argument(
         '--eps', default=1e-5, type=float,  help='RMSprop optimizer epsilon (default: 1e-5)'
@@ -69,7 +69,7 @@ def get_args():
         '--alpha', default=0.99, type=float,  help='RMSprop optimizer apha (default: 0.99)'
     )
     parser.add_argument(
-        '--num_processes', default=16, type=int,  help='how many training CPU processes to use (default: 16)'
+        '--num_processes', default=32, type=int,  help='how many training CPU processes to use (default: 32)'
     )
     parser.add_argument(
         '--device', default=0, type=int,  help='device id (default: 0)'
@@ -93,6 +93,12 @@ def get_args():
         '--num_steps', default=5, type=int,  help='number of forward steps in A2C (default: 5)'
     )
     parser.add_argument(
+        '--gae-lambda', default=0.96, type=float, help='GAE parameter lambda (default: 0.96)'
+    )
+    parser.add_argument(
+        '--num-env-steps', default=int(20e6), type=int, help='total environment timesteps for training (default: 20e6)'
+    )
+    parser.add_argument(
         '--enable_rotation', action='store_true', default=False,  help='whether agent can rotate box'
     )
     parser.add_argument(
@@ -108,7 +114,9 @@ def get_args():
         '--save_dir', default='./saved_models/', help='directory to save agent logs (default: ./saved_models/)'
     )
     parser.add_argument(
-        '--target-total', default=50, type=int, help='the target total number of items after scaling'
+        '--target-total', '--target_total', '--target_total_boxes',
+        dest='target_total', default=60, type=int,
+        help='the target total number of items after scaling'
     )
     parser.add_argument(
         '--seed', default=1, type=int,  help='random seed (default: 1)'
@@ -121,6 +129,10 @@ def get_args():
     args.channel = 4 # channels of CNN: 4 for hmap+next box, 5 for hmap nextbox+truemask
     args.data_type = args.item_seq
     args.test = (args.mode == 'test')
+
+    # For trajectory mode, default training dataset should be processed_train.pt
+    if args.item_seq == 'trajectory' and args.data_name == 'cut_1.pt':
+        args.data_name = 'processed_train.pt'
 
     box_range = args.item_size_range
     box_size_set = []

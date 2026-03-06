@@ -1,6 +1,5 @@
 from time import perf_counter
 from acktr.model_loader import nnModel
-from acktr.reorder import ReorderTree
 import gym
 from gym.envs.registration import register
 import copy
@@ -31,10 +30,9 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
     box_counter = 0
     start = perf_counter()
     while True:
-        box_list = env.box_creator.preview(preview_num)
-        
-        tree = ReorderTree(nmodel, box_list, env, times=100)
-        act, val, default = tree.reorder_search()
+        value, poss = nmodel.evaluate(obs, use_mask=True)
+        act = int(np.argmax(poss))
+        default = 0
         obs, _, done, info = env.step([act])
 
         box_counter += 1

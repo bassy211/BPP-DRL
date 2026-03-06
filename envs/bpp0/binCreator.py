@@ -61,6 +61,7 @@ class TrajectoryBoxCreator(BoxCreator):
         self.box_set = []
         self.weights = []  # 存储物料质量信息
         self.recorder = []
+        self.is_new_format = False
         
         # 加载数据
         if data_name is not None:
@@ -71,10 +72,20 @@ class TrajectoryBoxCreator(BoxCreator):
         raw_data = torch.load(self.data_name)
         if isinstance(raw_data, dict) and "Data" in raw_data:
             self.data = raw_data["Data"]
+            self.is_new_format = True
+        elif isinstance(raw_data, dict):
+            self.data = raw_data
+            self.is_new_format = True
         else:
             self.data = raw_data
-        self.trajectory_keys = list(self.data.keys())
-        print(f"成功加载训练数据，共有 {len(self.trajectory_keys)} 个轨迹(DN组)")
+            self.is_new_format = False
+
+        if self.is_new_format:
+            self.trajectory_keys = list(self.data.keys())
+            print(f"成功加载训练数据，共有 {len(self.trajectory_keys)} 个轨迹(DN组)")
+        else:
+            self.trajectory_keys = []
+            print(f"成功加载旧格式训练数据，共有 {len(self.data)} 个轨迹")
     
     def _scale_to_target(self, items, target_total):
         """
@@ -148,27 +159,36 @@ class TrajectoryBoxCreator(BoxCreator):
         self.box_list.clear()
         self.recorder = []
         self.box_index = 0
-        
-        # 随机选取一个轨迹
-        if index is None:
-            traj_idx = np.random.randint(0, len(self.trajectory_keys))
+
+        if self.is_new_format:
+            # 随机选取一个轨迹
+            if index is None:
+                traj_idx = np.random.randint(0, len(self.trajectory_keys))
+            else:
+                traj_idx = index % len(self.trajectory_keys)
+
+            traj_key = self.trajectory_keys[traj_idx]
+            items = self.data[traj_key]
+
+            # 等比例缩放到目标总数
+            scaled_items = self._scale_to_target(items, self.target_total)
+
+            # 随机打乱物料顺序
+            np.random.shuffle(scaled_items)
+
+            # 展开为单个箱子列表
+            self.box_set, self.weights = self._expand_items_to_boxes(scaled_items)
         else:
-            traj_idx = index % len(self.trajectory_keys)
-        
-        traj_key = self.trajectory_keys[traj_idx]
-        items = self.data[traj_key]
-        
-        # 统计原始总数
-        original_total = sum(item.get("number", 1) for item in items)
-        
-        # 等比例缩放到目标总数
-        scaled_items = self._scale_to_target(items, self.target_total)
-        
-        # 随机打乱物料顺序
-        np.random.shuffle(scaled_items)
-        
-        # 展开为单个箱子列表
-        self.box_set, self.weights = self._expand_items_to_boxes(scaled_items)
+            if len(self.data) == 0:
+                self.box_set, self.weights = [], []
+            else:
+                if index is None:
+                    traj_idx = np.random.randint(0, len(self.data))
+                else:
+                    traj_idx = index % len(self.data)
+                boxes = list(self.data[traj_idx])
+                self.box_set = [tuple(b) if isinstance(b, (list, tuple)) else b for b in boxes]
+                self.weights = [0.0] * len(self.box_set)
         
         # 添加一个终止箱子
         self.box_set.append((10, 10, 10))

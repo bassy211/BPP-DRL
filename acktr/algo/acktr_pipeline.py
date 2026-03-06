@@ -25,7 +25,6 @@ class ACKTR():
         self.invaild_coef = invaild_coef
         self.max_grad_norm = max_grad_norm
 
-        self.loss_func = nn.MSELoss(reduce=False, size_average=True)
         self.entropy_coef = entropy_coef
         self.args = args
 
@@ -42,7 +41,7 @@ class ACKTR():
         num_steps, num_processes, _ = rollouts.rewards.size()
         mask_size = rollouts.location_masks.size()[-1]
 
-        values, action_log_probs, dist_entropy, _, bad_prob, pred_mask = self.actor_critic.evaluate_actions(
+        values, action_log_probs, dist_entropy, _, _, _ = self.actor_critic.evaluate_actions(
             rollouts.obs[:-1].view(-1, *obs_shape),
             rollouts.recurrent_hidden_states[0].view(-1, self.actor_critic.recurrent_hidden_state_size),
             rollouts.masks[:-1].view(-1, 1),
@@ -56,14 +55,7 @@ class ACKTR():
         value_loss = advantages.pow(2).mean()
         action_loss = -(advantages.detach() * action_log_probs).mean()
 
-        mask_len = self.args.container_size[0]*self.args.container_size[1]
-        mask_len = mask_len * (1+ self.args.enable_rotation)
-        pred_mask = pred_mask.reshape((num_steps,num_processes,mask_len))
-
-        mask_truth = rollouts.location_masks[0:num_steps] 
-        graph_loss = self.loss_func(pred_mask, mask_truth).mean()
         dist_entropy = dist_entropy.mean()
-        prob_loss = bad_prob.mean()
 
         if self.acktr and self.optimizer.steps % self.optimizer.Ts == 0:
             # Sampled fisher, see Martens 2014
@@ -77,19 +69,18 @@ class ACKTR():
             sample_values = values + value_noise
             vf_fisher_loss = -(values - sample_values.detach()).pow(2).mean() # detach
 
-            fisher_loss = pg_fisher_loss + vf_fisher_loss + graph_loss * 1e-8
+            fisher_loss = pg_fisher_loss + vf_fisher_loss
             # fisher_loss = pg_fisher_loss + vf_fisher_loss
             self.optimizer.acc_stats = True
             fisher_loss.backward(retain_graph=True)
             self.optimizer.acc_stats = False
 
-        force = 0.5 * 10
         self.optimizer.zero_grad()
-        loss = value_loss * self.value_loss_coef
-        loss += action_loss
-        loss += prob_loss * self.invaild_coef
+        # L = w1 * L_actor + w2 * L_critic + w3 * L_entropy
+        # w1 is fixed to 1.0 here
+        loss = action_loss
+        loss += value_loss * self.value_loss_coef
         loss -= dist_entropy * self.entropy_coef
-        loss += force * graph_loss
         loss.backward()
 
         if self.acktr == False:
@@ -97,8 +88,7 @@ class ACKTR():
 
         self.optimizer.step()
 
-        # return value_loss.item(), action_loss.item(), dist_entropy.item(), prob_loss.item()
-        return value_loss.item(), action_loss.item(), dist_entropy.item(), prob_loss.item(), graph_loss.item()
+        return value_loss.item(), action_loss.item(), dist_entropy.item()
 
 def check_nan(model,index):
     for p in model.parameters():

@@ -96,7 +96,7 @@ def train_model(args):
                        args.value_loss_coef,
                        args.entropy_coef,
                        args.invalid_coef,
-                       args.lr,
+                       args.learning_rate,
                        args.eps,
                        args.alpha,
                        max_grad_norm = 0.5
@@ -145,7 +145,8 @@ def train_model(args):
 
     j = 0
     index = 0
-    while True:
+    total_num_steps = 0
+    while total_num_steps < args.num_env_steps:
         j += 1
         for step in range(args.num_steps):
             # Sample actions
@@ -178,9 +179,8 @@ def train_model(args):
                 rollouts.obs[-1], rollouts.recurrent_hidden_states[-1],
                 rollouts.masks[-1]).detach()
 
-        rollouts.compute_returns(next_value, False, args.gamma, 0.95, False)
-        # value_loss, action_loss, dist_entropy, prob_loss = agent.update(rollouts)
-        value_loss, action_loss, dist_entropy, prob_loss, graph_loss = agent.update(rollouts)
+        rollouts.compute_returns(next_value, True, args.gamma, args.gae_lambda, False)
+        value_loss, action_loss, dist_entropy = agent.update(rollouts)
 
         rollouts.after_update()
         if args.save_model:
@@ -216,8 +216,8 @@ def train_model(args):
                 writer.add_scalar('Distribution entropy', dist_entropy, j)
                 writer.add_scalar("The value loss", value_loss, j)
                 writer.add_scalar("The action loss", action_loss, j)
-                writer.add_scalar('Probability loss', prob_loss, j)
-                writer.add_scalar("Mask loss", graph_loss, j) # add mask loss
+
+            total_num_steps = (j + 1) * args.num_processes * args.num_steps
 
 
 def registration_envs():
