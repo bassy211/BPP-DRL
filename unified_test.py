@@ -4,8 +4,130 @@ from acktr.reorder import ReorderTree
 import gym
 import copy
 import numpy as np
+import json
+import os
+import datetime
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from scipy import stats
 from gym.envs.registration import register
 from acktr.arguments import get_args
+
+
+# ─────────────────────────── 统计辅助函数 ───────────────────────────
+
+def compute_stats(values: list) -> dict:
+    """计算一组数值的完整统计量，包含 95% 置信区间。"""
+    arr = np.array(values, dtype=float)
+    n = len(arr)
+    mean = float(np.mean(arr))
+    std  = float(np.std(arr, ddof=1))
+    var  = float(np.var(arr, ddof=1))
+    se   = std / np.sqrt(n)
+    # 双侧 95% t 置信区间
+    t_crit = stats.t.ppf(0.975, df=n - 1)
+    ci_lo  = float(mean - t_crit * se)
+    ci_hi  = float(mean + t_crit * se)
+    return {
+        "values":  [round(float(v), 6) for v in values],
+        "mean":    round(mean, 6),
+        "std":     round(std,  6),
+        "var":     round(var,  6),
+        "ci95_lo": round(ci_lo, 6),
+        "ci95_hi": round(ci_hi, 6),
+        "min":     round(float(np.min(arr)),            6),
+        "max":     round(float(np.max(arr)),            6),
+        "q25":     round(float(np.percentile(arr, 25)), 6),
+        "median":  round(float(np.median(arr)),         6),
+        "q75":     round(float(np.percentile(arr, 75)), 6),
+    }
+
+
+def save_results_json(url: str, args, ratios: list,
+                      center_offsets: list,
+                      avg_counter: float, avg_time: float,
+                      output_dir: str = "./results") -> str:
+    """将测试结果保存为 JSON 文件，返回文件路径。"""
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    fname = os.path.join(output_dir, f"result_{timestamp}.json")
+
+    times = len(ratios)
+    result = {
+        "meta": {
+            "model":           url,
+            "data":            f"./dataset/{args.data_name}",
+            "cases":           times,
+            "timestamp":       timestamp,
+            "env_name":        args.env_name,
+            "enable_rotation": bool(args.enable_rotation),
+        },
+        "space_utilization": compute_stats(ratios),
+        "center_offset":     compute_stats(center_offsets),
+        "throughput": {
+            "avg_items_per_case": round(avg_counter / times, 4),
+            "avg_time_per_case":  round(avg_time    / times, 4),
+            "avg_time_per_item":  round(avg_time    / avg_counter, 6),
+        },
+    }
+
+    with open(fname, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    print(f"[JSON] 结果已保存至: {fname}")
+    return fname
+
+
+def plot_boxplots(ratios: list, center_offsets: list,
+                  output_dir: str = "./results",
+                  tag: str = "") -> None:
+    """绘制空间利用率与质心稳定性的箱线图（含 95% CI 标注）并保存。"""
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if tag:
+        fname = os.path.join(output_dir, f"boxplot_{tag}_{timestamp}.png")
+    else:
+        fname = os.path.join(output_dir, f"boxplot_{timestamp}.png")
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+
+    def _draw_box(ax, data, title, ylabel, color):
+        arr = np.array(data, dtype=float)
+        n   = len(arr)
+        mean = np.mean(arr)
+        se   = np.std(arr, ddof=1) / np.sqrt(n)
+        t_crit = stats.t.ppf(0.975, df=n - 1)
+        ci_lo, ci_hi = mean - t_crit * se, mean + t_crit * se
+
+        bp = ax.boxplot(arr, patch_artist=True, widths=0.4,
+                        medianprops=dict(color="black", linewidth=2))
+        bp["boxes"][0].set_facecolor(color)
+        bp["boxes"][0].set_alpha(0.7)
+
+        # 均值点
+        ax.plot(1, mean, marker="D", color="red", zorder=5, label=f"Mean={mean:.4f}")
+        # 95% CI 误差线
+        ax.errorbar(1, mean, yerr=[[mean - ci_lo], [ci_hi - mean]],
+                    fmt="none", color="red", capsize=6, linewidth=1.5,
+                    label=f"95% CI [{ci_lo:.4f}, {ci_hi:.4f}]")
+
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_xticks([1])
+        ax.set_xticklabels([""])
+        ax.legend(fontsize=9)
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+
+    _draw_box(axes[0], ratios,
+              "Space Utilization", "Ratio", "#4C72B0")
+    _draw_box(axes[1], center_offsets,
+              "Center-of-Mass Offset", "Offset", "#DD8452")
+
+    fig.suptitle("BPP Evaluation — Box Plots with 95% CI", fontsize=14)
+    plt.tight_layout()
+    plt.savefig(fname, dpi=150)
+    plt.close()
+    print(f"[Plot] 箱线图已保存至: {fname}")
 
 def run_sequence(nmodel, raw_env, preview_num, c_bound):
     env = copy.deepcopy(raw_env)
@@ -71,22 +193,25 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     print('average sequence time: %.4f'%(avg_time/times))
     print('average time per item: %.4f'%(avg_time/avg_counter))
     print('----------------------------------------------')
-    
+
     # 计算并输出质心偏移量统计
-    center_offsets = np.array(center_offsets)
-    avg_offset = np.mean(center_offsets)
-    var_offset = np.var(center_offsets)
-    std_offset = np.std(center_offsets)
-    min_offset = np.min(center_offsets)
-    max_offset = np.max(center_offsets)
-    
+    co_arr     = np.array(center_offsets, dtype=float)
+    avg_offset = float(np.mean(co_arr))
+    std_offset = float(np.std(co_arr, ddof=1))
+
     print('---------- Center of Mass Statistics ----------')
     print('Average center offset: %.4f' % avg_offset)
-    print('Variance of center offset: %.4f' % var_offset)
     print('Std deviation of center offset: %.4f' % std_offset)
-    print('Min center offset: %.4f' % min_offset)
-    print('Max center offset: %.4f' % max_offset)
     print('----------------------------------------------')
+
+    # ── 保存 JSON 结果文件 ──────────────────────────────────────────
+    save_results_json(url, args, ratios, center_offsets,
+                      avg_counter, avg_time, output_dir="./results")
+
+    # ── 绘制箱线图 ─────────────────────────────────────────────────
+    model_tag = os.path.splitext(os.path.basename(url))[0]
+    plot_boxplots(ratios, center_offsets,
+                  output_dir="./results", tag=model_tag)
 
 def registration_envs():
     register(
