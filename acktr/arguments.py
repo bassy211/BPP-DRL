@@ -42,7 +42,7 @@ def get_args():
         '--item-seq', default='cut1', help='item sequence generators (ignored when testing), cut1|cut2|rs|trajectory'
     )
     parser.add_argument(
-        '--algorithm', default='acktr', type=str,  help='algorithm used, acktr|ppo|a2c'
+        '--algorithm', default='a2c', type=str,  help='algorithm used, acktr|ppo|a2c'
     )
     parser.add_argument(
         '--gamma', default=1.0, type=float,  help='discount factor for rewards (default: 1.0)'
@@ -131,7 +131,7 @@ def get_args():
     args.test = (args.mode == 'test')
 
     # For trajectory mode, default training dataset should be processed_train.pt
-    if args.item_seq == 'trajectory' and args.data_name == 'cut_1.pt':
+    if args.item_seq == 'trajectory':
         args.data_name = 'processed_train.pt'
 
     box_range = args.item_size_range
