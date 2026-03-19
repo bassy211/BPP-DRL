@@ -9,12 +9,21 @@ from .binCreator import RandomBoxCreator, LoadBoxCreator, BoxCreator, Trajectory
 class PackingGame(gym.Env):
     def __init__(self, box_creator=None, container_size = (20, 20, 20),
                  box_set = None, data_name = None, test = False,
-                 data_type = 'cut1', enable_rotation=False, target_total=50, **kwags):
+                 data_type = 'cut1', enable_rotation=False, target_total=50, use_pusnet=False,
+                 reward_alpha=1.0, reward_beta=1.0, reward_sigma=0.8, reward_tau=0.8, **kwags):
         self.box_creator = box_creator
         self.bin_size = container_size
         self.area = int(self.bin_size[0] * self.bin_size[1])
         self.space = Space(*self.bin_size)
         self.can_rotate = enable_rotation
+        self.use_pusnet = use_pusnet
+        self.buffer = []
+        self.reward_alpha = reward_alpha
+        self.reward_beta = reward_beta
+        self.reward_sigma = reward_sigma
+        self.reward_tau = reward_tau
+        self.max_episode_steps = target_total * 4
+        self.current_step = 0
 
         if not test and box_creator is None:
             assert box_set is not None or data_name is not None
@@ -38,10 +47,33 @@ class PackingGame(gym.Env):
         if test:
             self.box_creator = LoadBoxCreator(data_name, target_total=target_total)
 
-        self.act_len = self.area * (1+self.can_rotate)
-        self.obs_len = self.area * (1+3)
+        self.act_len = self.area * 2 if self.use_pusnet else self.area * (1 + self.can_rotate)
+        if self.use_pusnet:
+            self.obs_len = self.area * self.bin_size[2] + self.area * 3
+        else:
+            self.obs_len = self.area * (1+3)
         self.action_space = gym.spaces.Discrete(self.act_len)
         self.observation_space = gym.spaces.Box(low=0.0, high=self.space.height, shape=(self.obs_len,))
+
+    def clone_for_search(self):
+        # Use a lightweight clone to avoid deepcopying huge dataset objects.
+        new_env = copy.copy(self)
+        new_env.space = copy.deepcopy(self.space)
+        new_env.buffer = copy.deepcopy(self.buffer)
+
+        src_creator = self.box_creator
+        new_creator = copy.copy(src_creator)
+        for key, value in src_creator.__dict__.items():
+            if key == 'data':
+                # Dataset content is treated as read-only and shared across clones.
+                setattr(new_creator, key, value)
+                continue
+            try:
+                setattr(new_creator, key, copy.deepcopy(value))
+            except Exception:
+                setattr(new_creator, key, value)
+        new_env.box_creator = new_creator
+        return new_env
         
 
     def get_box_ratio(self):
@@ -58,19 +90,43 @@ class PackingGame(gym.Env):
     def reset(self):
         self.box_creator.reset()
         self.space = Space(*self.bin_size)
+        self.buffer = []
+        self.current_step = 0
         self.box_creator.generate_box_size()
         return self.cur_observation
 
     @property
     def cur_observation(self):
-        hmap = self.space.plain
-        # mask = self.get_possible_position()
         size = self.get_box_plain()
+        if self.use_pusnet:
+            voxel = self.space.get_weighted_voxel_grid()
+            return np.concatenate((voxel.reshape(-1), np.reshape(np.stack(size), newshape=(-1,))))
+        hmap = self.space.plain
         return np.reshape(np.stack((hmap,  *size)), newshape=(-1,))
 
     @property
     def next_box(self):
+        if self.use_pusnet and len(self.buffer) > 0:
+            return self.buffer[-1]
         return self.box_creator.preview(1)[0]
+
+    def _consume_current_item(self):
+        if self.use_pusnet and len(self.buffer) > 0:
+            self.buffer.pop()
+            return
+        self.box_creator.drop_box()
+        self.box_creator.generate_box_size()
+
+    def _compute_reward(self, wasted_before, wasted_after):
+        total_vol = float(self.space.plain_size[0] * self.space.plain_size[1] * self.space.plain_size[2])
+        cur = self.next_box
+        r_v = float(cur[0] * cur[1] * cur[2]) / total_vol
+        packed_vol = sum([b.x * b.y * b.z for b in self.space.boxes])
+        r_sv = float(packed_vol) / total_vol
+        r_w = float(wasted_after) / total_vol
+        r_cw = float(wasted_after - wasted_before) / total_vol
+        reward = self.reward_alpha * r_v + self.reward_beta * r_sv - self.reward_sigma * r_w - self.reward_tau * r_cw
+        return reward
 
     def get_possible_position(self, plain=None):
         x = self.next_box[0]
@@ -100,8 +156,43 @@ class PackingGame(gym.Env):
             idx = action[0]
         else:
             idx = action
+        self.current_step += 1
+        wasted_before = self.space.get_wasted_volume() if self.use_pusnet else 0
+
+        if self.use_pusnet:
+            is_unpack = idx >= self.area
+            cell_idx = idx - self.area if is_unpack else idx
+            succeeded = False
+
+            if not is_unpack:
+                succeeded = self.space.drop_box(self.next_box, cell_idx, False)
+                if succeeded:
+                    self._consume_current_item()
+            else:
+                removed = self.space.unpack_box_at(cell_idx)
+                if removed is not None:
+                    self.buffer.append(removed)
+                    succeeded = True
+
+            wasted_after = self.space.get_wasted_volume()
+            reward = self._compute_reward(wasted_before, wasted_after)
+            if not succeeded:
+                reward -= 0.3
+
+            done = False
+            if self.current_step >= self.max_episode_steps:
+                done = True
+
+            info = {
+                'counter': len(self.space.boxes),
+                'ratio': self.space.get_ratio(),
+                'center_offset': self.space.get_center_offset(),
+                'buffer_size': len(self.buffer),
+                'succeeded': succeeded,
+            }
+            return self.cur_observation, reward, done, info
+
         flag = False
-        # check whether rotate the box
         if idx > self.area:
             assert self.can_rotate
             idx = idx - self.area
@@ -116,10 +207,8 @@ class PackingGame(gym.Env):
 
         box_ratio = self.get_box_ratio()
 
-        self.box_creator.drop_box() # remove current box from the list
-        self.box_creator.generate_box_size() # add a new box to the list
-
-        plain = self.space.plain
+        self.box_creator.drop_box()
+        self.box_creator.generate_box_size()
 
         reward = box_ratio * 10
         done = False
@@ -127,6 +216,5 @@ class PackingGame(gym.Env):
         info['counter'] = len(self.space.boxes)
         info['ratio'] = self.space.get_ratio()
         info['center_offset'] = self.space.get_center_offset()
-        # info['mask'] = self.get_possible_position().reshape((-1,))
         return self.cur_observation, reward, done, info
 

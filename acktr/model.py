@@ -16,15 +16,24 @@ class Policy(nn.Module):
         super(Policy, self).__init__()
         if base_kwargs is None:
             base_kwargs = {}
+        self.args = base_kwargs.get('args', None)
+        self.use_pusnet = bool(getattr(self.args, 'use_pusnet', False))
+        self.invalid_logit_penalty = float(getattr(self.args, 'invalid_logit_penalty', 1e8))
+        self.action_area = int(getattr(self.args, 'container_size', [1, 1, 1])[0] * getattr(self.args, 'container_size', [1, 1, 1])[1])
+
         if base is None:
-            if len(obs_shape) == 3:
+            if self.use_pusnet and len(obs_shape) == 1:
+                base = PUSNetBase
+            elif len(obs_shape) == 3:
                 base = CNNBase
             elif len(obs_shape) == 1:
                 base = CNNPro
             else:
                 raise NotImplementedError
         self.base = base(obs_shape[0], **base_kwargs)
-        if action_space.__class__.__name__ == "Discrete":
+        if self.use_pusnet:
+            self.dist = None
+        elif action_space.__class__.__name__ == "Discrete":
             num_outputs = action_space.n
             self.dist = Categorical(self.base.output_size, num_outputs)
         # elif action_space.__class__.__name__ == "Box":
@@ -55,6 +64,29 @@ class Policy(nn.Module):
         return output
 
     def act(self, inputs, rnn_hxs, masks, location_masks, deterministic=False):
+        if self.use_pusnet:
+            vp, vu, pack_logits, unpack_logits, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+            pack_mask = location_masks[:, :self.action_area]
+            unpack_mask = location_masks[:, self.action_area:]
+
+            pack_logits = pack_logits.masked_fill(pack_mask <= 0, -self.invalid_logit_penalty)
+            unpack_logits = unpack_logits.masked_fill(unpack_mask <= 0, -self.invalid_logit_penalty)
+
+            choose_pack = (vp >= vu).float()
+            choose_unpack = 1.0 - choose_pack
+            pack_gate = torch.where(choose_pack > 0, torch.zeros_like(pack_logits), torch.full_like(pack_logits, -self.invalid_logit_penalty))
+            unpack_gate = torch.where(choose_unpack > 0, torch.zeros_like(unpack_logits), torch.full_like(unpack_logits, -self.invalid_logit_penalty))
+
+            final_logits = torch.cat((pack_logits + pack_gate, unpack_logits + unpack_gate), dim=-1)
+            dist = torch.distributions.Categorical(logits=final_logits)
+            if deterministic:
+                action = torch.argmax(final_logits, dim=-1, keepdim=True)
+            else:
+                action = dist.sample().unsqueeze(-1)
+            action_log_probs = dist.log_prob(action.squeeze(-1)).unsqueeze(-1)
+            value = torch.maximum(vp, vu)
+            return value, action, action_log_probs, rnn_hxs
+
         value, actor_features, rnn_hxs, graph = self.base(inputs, rnn_hxs, masks)
         dist, bad_prob, _ = self.dist(actor_features, location_masks)
 
@@ -79,6 +111,9 @@ class Policy(nn.Module):
         return value, action, action_log_probs, pred_mask
 
     def get_value(self, inputs, rnn_hxs, masks):
+        if self.use_pusnet:
+            vp, vu, _, _, _ = self.base(inputs, rnn_hxs, masks)
+            return torch.maximum(vp, vu)
         value, _, _ ,_= self.base(inputs, rnn_hxs, masks)
         return value
 
@@ -88,6 +123,29 @@ class Policy(nn.Module):
         return distribution
 
     def evaluate_actions(self, inputs, rnn_hxs, masks, action, location_masks):
+        if self.use_pusnet:
+            vp, vu, pack_logits, unpack_logits, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+            pack_mask = location_masks[:, :self.action_area]
+            unpack_mask = location_masks[:, self.action_area:]
+
+            pack_logits = pack_logits.masked_fill(pack_mask <= 0, -self.invalid_logit_penalty)
+            unpack_logits = unpack_logits.masked_fill(unpack_mask <= 0, -self.invalid_logit_penalty)
+
+            choose_pack = (vp >= vu).float()
+            choose_unpack = 1.0 - choose_pack
+            pack_gate = torch.where(choose_pack > 0, torch.zeros_like(pack_logits), torch.full_like(pack_logits, -self.invalid_logit_penalty))
+            unpack_gate = torch.where(choose_unpack > 0, torch.zeros_like(unpack_logits), torch.full_like(unpack_logits, -self.invalid_logit_penalty))
+            final_logits = torch.cat((pack_logits + pack_gate, unpack_logits + unpack_gate), dim=-1)
+
+            dist = torch.distributions.Categorical(logits=final_logits)
+            action_log_probs = dist.log_prob(action.squeeze(-1)).unsqueeze(-1)
+            dist_entropy = dist.entropy().mean()
+
+            bad_prob = torch.zeros_like(final_logits)
+            pred_mask = location_masks
+            value = torch.maximum(vp, vu)
+            return value, action_log_probs, dist_entropy, rnn_hxs, bad_prob, pred_mask
+
         value, actor_features, rnn_hxs, graph = self.base(inputs, rnn_hxs, masks)
         dist, bad_prob, mask_dist= self.dist(actor_features, location_masks)
         action_log_probs = dist.log_probs(action)
@@ -261,6 +319,65 @@ class MLPBase(NNBase):
         hidden_actor = self.actor(x)
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs
+
+
+class PUSNetBase(NNBase):
+    def __init__(self, num_inputs, recurrent=False, hidden_size=256, args=None):
+        super(PUSNetBase, self).__init__(recurrent, num_inputs, hidden_size, args)
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), nn.init.calculate_gain('relu'))
+        self.args = args
+        self.w = args.container_size[0]
+        self.l = args.container_size[1]
+        self.h = args.container_size[2]
+        self.area = self.w * self.l
+
+        self.voxel_encoder = nn.Sequential(
+            init_(nn.Conv3d(1, 16, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            init_(nn.Conv3d(16, 32, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool3d((4, 4, 4)),
+            Flatten(),
+            init_(nn.Linear(32 * 4 * 4 * 4, hidden_size)),
+            nn.ReLU(),
+        )
+
+        self.size_encoder = nn.Sequential(
+            init_(nn.Conv2d(3, 16, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            init_(nn.Conv2d(16, 16, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            Flatten(),
+            init_(nn.Linear(16 * self.w * self.l, hidden_size)),
+            nn.ReLU(),
+        )
+
+        self.shared = nn.Sequential(
+            init_(nn.Linear(hidden_size * 2, hidden_size)),
+            nn.ReLU(),
+        )
+
+        self.pack_actor = init_(nn.Linear(hidden_size, self.area))
+        self.unpack_actor = init_(nn.Linear(hidden_size, self.area))
+        self.pack_critic = init_(nn.Linear(hidden_size, 1))
+        self.unpack_critic = init_(nn.Linear(hidden_size, 1))
+        self.train()
+
+    def forward(self, inputs, rnn_hxs, masks):
+        bsz = inputs.size(0)
+        voxel_len = self.area * self.h
+        voxel = inputs[:, :voxel_len].reshape((bsz, self.w, self.l, self.h)).unsqueeze(1)
+        size_maps = inputs[:, voxel_len: voxel_len + 3 * self.area].reshape((bsz, 3, self.w, self.l))
+
+        voxel_f = self.voxel_encoder(voxel)
+        size_f = self.size_encoder(size_maps)
+        feat = self.shared(torch.cat((voxel_f, size_f), dim=-1))
+
+        vp = self.pack_critic(feat)
+        vu = self.unpack_critic(feat)
+        pack_logits = self.pack_actor(feat)
+        unpack_logits = self.unpack_actor(feat)
+        return vp, vu, pack_logits, unpack_logits, rnn_hxs
 
 class CNNPro(NNBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=256, args = None):

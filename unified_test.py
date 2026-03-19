@@ -8,7 +8,7 @@ from gym.envs.registration import register
 from acktr.arguments import get_args
 
 def run_sequence(nmodel, raw_env, preview_num, c_bound):
-    env = copy.deepcopy(raw_env)
+    env = raw_env.clone_for_search() if hasattr(raw_env, 'clone_for_search') else copy.deepcopy(raw_env)
     obs = env.cur_observation
     default_counter = 0
     box_counter = 0

@@ -9,8 +9,9 @@ from acktr.utils import get_rotation_mask, get_possible_position
 class nnModel(object):
     def __init__(self, url, args):
         area = args.container_size[0]*args.container_size[1]
-        self.alen = area * (1+args.enable_rotation)
-        self.olen = args.channel * area
+        self.use_pusnet = bool(getattr(args, 'use_pusnet', False))
+        self.alen = area * 2 if self.use_pusnet else area * (1+args.enable_rotation)
+        self.olen = area * args.container_size[2] + 3 * area if self.use_pusnet else args.channel * area
         self.height = args.container_size[2]
         self.device = torch.device(args.device)
         self._model = self._load_model(url, args)
@@ -37,17 +38,27 @@ class nnModel(object):
 
     def evaluate(self, obs, use_mask=True):
         x = copy.deepcopy(obs)
-        x = torch.FloatTensor(x).to(self.device)
+        x = torch.FloatTensor(x).unsqueeze(0).to(self.device)
 
-        value, logits, _, pred= self._model.base(x, 0, 0)
-        poss = self._model.dist.get_policy_distribution(logits)
-        pred = self._model.binary(pred)
+        if self.use_pusnet:
+            vp, vu, pack_logits, unpack_logits, _ = self._model.base(x, 0, 0)
+            choose_pack = (vp >= vu).float()
+            choose_unpack = 1.0 - choose_pack
+            pack_gate = torch.where(choose_pack > 0, torch.zeros_like(pack_logits), torch.full_like(pack_logits, -1e8))
+            unpack_gate = torch.where(choose_unpack > 0, torch.zeros_like(unpack_logits), torch.full_like(unpack_logits, -1e8))
+            poss = torch.cat((pack_logits + pack_gate, unpack_logits + unpack_gate), dim=-1)
+            pred = torch.ones_like(poss)
+            value = torch.maximum(vp, vu)
+        else:
+            value, logits, _, pred = self._model.base(x, 0, 0)
+            poss = self._model.dist.get_policy_distribution(logits)
+            pred = self._model.binary(pred)
         # pred = get_rotation_mask(torch.tensor(obs), [10,10,10])
         # pred = np.array(get_possible_position(torch.tensor(obs), [10,10,10]))
 
-        value = float(value)
-        poss = poss.cpu().detach().numpy()
-        pred = pred.cpu().detach().numpy()
+        value = float(value.squeeze(0))
+        poss = poss.squeeze(0).cpu().detach().numpy()
+        pred = pred.squeeze(0).cpu().detach().numpy()
 
         # np.set_printoptions(precision=3, suppress=True)
         # print('---------------------------')
@@ -67,15 +78,25 @@ class nnModel(object):
 
     def sample_action(self, obs):
         x = copy.deepcopy(obs)
-        x = torch.FloatTensor(x).to(self.device)
+        x = torch.FloatTensor(x).unsqueeze(0).to(self.device)
 
-        value, logits, _, pred= self._model.base(x, 0, 0)
-        poss = self._model.dist.get_policy_distribution(logits)
-        pred = self._model.binary(pred)
+        if self.use_pusnet:
+            vp, vu, pack_logits, unpack_logits, _ = self._model.base(x, 0, 0)
+            choose_pack = (vp >= vu).float()
+            choose_unpack = 1.0 - choose_pack
+            pack_gate = torch.where(choose_pack > 0, torch.zeros_like(pack_logits), torch.full_like(pack_logits, -1e8))
+            unpack_gate = torch.where(choose_unpack > 0, torch.zeros_like(unpack_logits), torch.full_like(unpack_logits, -1e8))
+            poss = torch.cat((pack_logits + pack_gate, unpack_logits + unpack_gate), dim=-1)
+            value = torch.maximum(vp, vu)
+            cat = torch.distributions.Categorical(logits=poss)
+        else:
+            value, logits, _, pred= self._model.base(x, 0, 0)
+            poss = self._model.dist.get_policy_distribution(logits)
+            pred = self._model.binary(pred)
+            cat = torch.distributions.Categorical(logits=poss+pred*7)
 
-        value = float(value)
-        cat = torch.distributions.Categorical(logits=poss+pred*7)
-        action = int(cat.sample())
+        value = float(value.squeeze(0))
+        action = int(cat.sample().squeeze(0))
 
         return value, action
 

@@ -6,11 +6,12 @@ import numpy as np
 import torch
 from shutil import copyfile
 from acktr import algo, utils
-from acktr.utils import get_possible_position, get_rotation_mask
+from acktr.utils import get_possible_position, get_rotation_mask, get_pusnet_action_mask
 from acktr.envs import make_vec_envs
 from acktr.arguments import get_args
 from acktr.model import Policy
 from acktr.storage import RolloutStorage
+from acktr.funsearch import OnlineFunSearchManager
 from evaluation import evaluate
 from tensorboardX import SummaryWriter
 from unified_test import unified_test
@@ -116,12 +117,15 @@ def train_model(args):
                               actor_critic.recurrent_hidden_state_size,
                               can_give_up=False,
                               enable_rotation=args.enable_rotation,
-                              pallet_size=args.container_size[0])
+                              pallet_size=args.container_size[0],
+                              use_pusnet=args.use_pusnet)
 
     obs = envs.reset()
     location_masks = []
     for observation in obs:
-        if not args.enable_rotation:
+        if args.use_pusnet:
+            box_mask = get_pusnet_action_mask(observation, args.container_size, use_modulation=args.use_action_modulation)
+        elif not args.enable_rotation:
             box_mask = get_possible_position(observation, args.container_size)
         else:
             box_mask = get_rotation_mask(observation, args.container_size)
@@ -143,6 +147,18 @@ def train_model(args):
     if args.tensorboard:
         writer = SummaryWriter(logdir='{}/{}/{}'.format(tbx_dir, env_name, custom))
 
+    funsearch_manager = None
+    funsearch_obs_buffer = []
+    if args.use_pusnet and args.enable_online_funsearch:
+        funsearch_dir = os.path.join(data_path, 'funsearch')
+        funsearch_manager = OnlineFunSearchManager(
+            save_dir=funsearch_dir,
+            container_size=args.container_size,
+            llm_enabled=args.llm_enable,
+            llm_model=args.llm_model,
+            topk=args.funsearch_topk,
+        )
+
     j = 0
     index = 0
     while True:
@@ -156,12 +172,22 @@ def train_model(args):
 
             location_masks = []
             obs, reward, done, infos = envs.step(action)
+
+            if funsearch_manager is not None:
+                obs_np = obs.detach().cpu().numpy()
+                for ob in obs_np:
+                    funsearch_obs_buffer.append(ob.copy())
+                if len(funsearch_obs_buffer) > args.funsearch_sample_budget:
+                    funsearch_obs_buffer = funsearch_obs_buffer[-args.funsearch_sample_budget:]
+
             for i in range(len(infos)):
                 if 'episode' in infos[i].keys():
                     episode_rewards.append(infos[i]['episode']['r'])
                     episode_ratio.append(infos[i]['ratio'])
             for observation in obs:
-                if not args.enable_rotation:
+                if args.use_pusnet:
+                    box_mask = get_pusnet_action_mask(observation, args.container_size, use_modulation=args.use_action_modulation)
+                elif not args.enable_rotation:
                     box_mask = get_possible_position(observation, args.container_size)
                 else:
                     box_mask = get_rotation_mask(observation, args.container_size)
@@ -190,6 +216,18 @@ def train_model(args):
                     getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
                 ], os.path.join(data_path, env_name + time_now + ".pt"))
 
+        if funsearch_manager is not None and j % args.funsearch_interval == 0:
+            evolve_result = funsearch_manager.iterate(
+                observations=funsearch_obs_buffer,
+                candidates=args.funsearch_candidates,
+            )
+            best_scores = funsearch_manager.best_scores()
+            print('FunSearch update:', evolve_result)
+            print('FunSearch best scores:', best_scores)
+            if args.tensorboard:
+                writer.add_scalar('FunSearch/best_pack_score', best_scores['pack'], j)
+                writer.add_scalar('FunSearch/best_unpack_score', best_scores['unpack'], j)
+
         # print useful information of training
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
@@ -209,6 +247,10 @@ def train_model(args):
                             np.median(episode_rewards), np.min(episode_rewards),
                             np.max(episode_rewards), dist_entropy, value_loss,
                             action_loss, np.mean(episode_ratio)))
+            if args.use_pusnet:
+                print('Active branch: {}, branch samples: {}'.format(
+                    getattr(agent, 'last_active_branch', 'na'),
+                    getattr(agent, 'last_branch_samples', -1)))
 
             if args.tensorboard:
                 writer.add_scalar('The average rewards', np.mean(episode_rewards), j)
@@ -218,6 +260,10 @@ def train_model(args):
                 writer.add_scalar("The action loss", action_loss, j)
                 writer.add_scalar('Probability loss', prob_loss, j)
                 writer.add_scalar("Mask loss", graph_loss, j) # add mask loss
+                if args.use_pusnet:
+                    branch_id = 0 if getattr(agent, 'last_active_branch', 'pack') == 'pack' else 1
+                    writer.add_scalar('Branch/active', branch_id, j)
+                    writer.add_scalar('Branch/samples', getattr(agent, 'last_branch_samples', 0), j)
 
 
 def registration_envs():

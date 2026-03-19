@@ -42,7 +42,12 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, args):
             env = gym.make(env_id,
                            enable_rotation = args.enable_rotation,
                            box_set = args.box_size_set, container_size = args.container_size, test = False,
-                           data_name = data_name, data_type = args.data_type, target_total = args.target_total)
+                           data_name = data_name, data_type = args.data_type, target_total = args.target_total,
+                           use_pusnet = args.use_pusnet,
+                           reward_alpha = args.reward_alpha,
+                           reward_beta = args.reward_beta,
+                           reward_sigma = args.reward_sigma,
+                           reward_tau = args.reward_tau)
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
@@ -100,7 +105,12 @@ def make_vec_envs(env_name,
         env = gym.make(env_name,
                        enable_rotation=args.enable_rotation,
                        box_set=args.box_size_set, container_size=args.container_size, test = False,
-                       data_name = None, target_total = args.target_total)
+                       data_name = None, target_total = args.target_total,
+                       use_pusnet = args.use_pusnet,
+                       reward_alpha = args.reward_alpha,
+                       reward_beta = args.reward_beta,
+                       reward_sigma = args.reward_sigma,
+                       reward_tau = args.reward_tau)
         spaces = [env.observation_space, env.action_space]
         envs = ShmemVecEnv(envs, spaces, context='fork')
 

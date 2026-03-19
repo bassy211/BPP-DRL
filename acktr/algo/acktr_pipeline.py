@@ -34,6 +34,47 @@ class ACKTR():
         else:
             self.optimizer = optim.RMSprop(actor_critic.parameters(), lr, eps=eps, alpha=alpha)
 
+        self.branch_cursor = 0
+        self.last_active_branch = 'pack'
+        self.last_branch_samples = 0
+
+    def _set_branch_trainable(self, branch):
+        if (not self.args.use_pusnet) or (not hasattr(self.actor_critic.base, 'pack_actor')):
+            return
+        pack_train = branch == 'pack'
+        for p in self.actor_critic.base.pack_actor.parameters():
+            p.requires_grad = pack_train
+        for p in self.actor_critic.base.pack_critic.parameters():
+            p.requires_grad = pack_train
+        for p in self.actor_critic.base.unpack_actor.parameters():
+            p.requires_grad = (not pack_train)
+        for p in self.actor_critic.base.unpack_critic.parameters():
+            p.requires_grad = (not pack_train)
+
+    def _reset_trainable(self):
+        if (not self.args.use_pusnet) or (not hasattr(self.actor_critic.base, 'pack_actor')):
+            return
+        for p in self.actor_critic.base.pack_actor.parameters():
+            p.requires_grad = True
+        for p in self.actor_critic.base.pack_critic.parameters():
+            p.requires_grad = True
+        for p in self.actor_critic.base.unpack_actor.parameters():
+            p.requires_grad = True
+        for p in self.actor_critic.base.unpack_critic.parameters():
+            p.requires_grad = True
+
+    def _pick_active_branch(self, pack_count, unpack_count):
+        mode = getattr(self.args, 'branch_update_mode', 'alternating')
+        if mode == 'pack':
+            return 'pack'
+        if mode == 'unpack':
+            return 'unpack'
+        if mode == 'auto':
+            return 'pack' if pack_count >= unpack_count else 'unpack'
+        branch = 'pack' if (self.branch_cursor % 2 == 0) else 'unpack'
+        self.branch_cursor += 1
+        return branch
+
 
     def update(self, rollouts):
         # check_nan(self.actor_critic, 1)
@@ -53,17 +94,50 @@ class ACKTR():
         action_log_probs = action_log_probs.view(num_steps, num_processes, 1)
 
         advantages = rollouts.returns[:-1] - values
-        value_loss = advantages.pow(2).mean()
-        action_loss = -(advantages.detach() * action_log_probs).mean()
+
+        if self.args.use_pusnet:
+            area = self.args.container_size[0] * self.args.container_size[1]
+            actions_flat = rollouts.actions.view(-1, action_shape).squeeze(-1)
+            is_pack = actions_flat < area
+            pack_count = int(is_pack.sum().item())
+            unpack_count = int((~is_pack).sum().item())
+            active_branch = self._pick_active_branch(pack_count, unpack_count)
+            selected = is_pack if active_branch == 'pack' else (~is_pack)
+            if int(selected.sum().item()) == 0:
+                active_branch = 'unpack' if active_branch == 'pack' else 'pack'
+                selected = is_pack if active_branch == 'pack' else (~is_pack)
+
+            self._set_branch_trainable(active_branch)
+
+            adv_flat = advantages.view(-1, 1)
+            logp_flat = action_log_probs.view(-1, 1)
+            if int(selected.sum().item()) > 0:
+                value_loss = adv_flat[selected].pow(2).mean()
+                action_loss = -(adv_flat[selected].detach() * logp_flat[selected]).mean()
+            else:
+                value_loss = adv_flat.pow(2).mean() * 0.0
+                action_loss = logp_flat.mean() * 0.0
+
+            self.last_active_branch = active_branch
+            self.last_branch_samples = int(selected.sum().item())
+        else:
+            value_loss = advantages.pow(2).mean()
+            action_loss = -(advantages.detach() * action_log_probs).mean()
 
         mask_len = self.args.container_size[0]*self.args.container_size[1]
-        mask_len = mask_len * (1+ self.args.enable_rotation)
-        pred_mask = pred_mask.reshape((num_steps,num_processes,mask_len))
+        if self.args.use_pusnet:
+            mask_len = mask_len * 2
+        else:
+            mask_len = mask_len * (1 + self.args.enable_rotation)
 
-        mask_truth = rollouts.location_masks[0:num_steps] 
-        graph_loss = self.loss_func(pred_mask, mask_truth).mean()
+        if self.args.use_pusnet:
+            graph_loss = torch.zeros(1, device=values.device).mean()
+        else:
+            pred_mask = pred_mask.reshape((num_steps, num_processes, mask_len))
+            mask_truth = rollouts.location_masks[0:num_steps]
+            graph_loss = self.loss_func(pred_mask, mask_truth).mean()
         dist_entropy = dist_entropy.mean()
-        prob_loss = bad_prob.mean()
+        prob_loss = torch.zeros(1, device=values.device).mean() if self.args.use_pusnet else bad_prob.mean()
 
         if self.acktr and self.optimizer.steps % self.optimizer.Ts == 0:
             # Sampled fisher, see Martens 2014
@@ -96,6 +170,7 @@ class ACKTR():
             nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
 
         self.optimizer.step()
+        self._reset_trainable()
 
         # return value_loss.item(), action_loss.item(), dist_entropy.item(), prob_loss.item()
         return value_loss.item(), action_loss.item(), dist_entropy.item(), prob_loss.item(), graph_loss.item()

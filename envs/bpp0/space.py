@@ -33,9 +33,11 @@ class Space(object):
     def __init__(self, width=10, length=10, height=10):
         self.plain_size = np.array([width, length, height])
         self.plain = np.zeros(shape=(width, length), dtype=np.int32)
+        self.occupancy = np.zeros(shape=(width, length, height), dtype=np.int8)
         self.boxes = []
         self.flags = [] # record rotation information
         self.height = height
+        self.last_wasted_volume = 0
 
     def print_height_graph(self):
         print(self.plain)
@@ -69,6 +71,98 @@ class Space(object):
 
     def get_action_space(self):
         return self.plain_size[0] * self.plain_size[1]
+
+    def rebuild_state(self):
+        width, length, height = self.plain_size
+        self.occupancy = np.zeros((width, length, height), dtype=np.int8)
+        self.plain = np.zeros((width, length), dtype=np.int32)
+        for box in self.boxes:
+            x0, x1 = box.lx, box.lx + box.x
+            y0, y1 = box.ly, box.ly + box.y
+            z0, z1 = box.lz, box.lz + box.z
+            self.occupancy[x0:x1, y0:y1, z0:z1] = 1
+            self.plain = self.update_height_graph(self.plain, box)
+
+    def get_top_box_at(self, lx, ly):
+        candidates = []
+        for idx, box in enumerate(self.boxes):
+            if box.lx <= lx < box.lx + box.x and box.ly <= ly < box.ly + box.y:
+                candidates.append((idx, box))
+        if not candidates:
+            return None, None
+        candidates.sort(key=lambda item: item[1].lz + item[1].z, reverse=True)
+        top_idx, top_box = candidates[0]
+
+        top_surface = top_box.lz + top_box.z
+        for idx, other in enumerate(self.boxes):
+            if idx == top_idx:
+                continue
+            overlap_x = not (other.lx + other.x <= top_box.lx or top_box.lx + top_box.x <= other.lx)
+            overlap_y = not (other.ly + other.y <= top_box.ly or top_box.ly + top_box.y <= other.ly)
+            if overlap_x and overlap_y and other.lz >= top_surface:
+                return None, None
+        return top_idx, top_box
+
+    def unpack_box_at(self, idx):
+        lx, ly = self.idx_to_position(idx)
+        top_idx, top_box = self.get_top_box_at(lx, ly)
+        if top_box is None:
+            return None
+        removed = self.boxes.pop(top_idx)
+        self.flags.pop(top_idx)
+        self.rebuild_state()
+        self.last_wasted_volume = self.get_wasted_volume()
+        return (removed.x, removed.y, removed.z)
+
+    def get_unpack_mask(self):
+        width, length, _ = self.plain_size
+        mask = np.zeros((width, length), dtype=np.int32)
+        for i in range(width):
+            for j in range(length):
+                top_idx, top_box = self.get_top_box_at(i, j)
+                if top_box is not None:
+                    mask[i, j] = 1
+        return mask
+
+    def get_wasted_volume(self):
+        width, length, height = self.plain_size
+        wasted = 0
+        min_free_height = 2
+        for i in range(width):
+            for j in range(length):
+                col = self.occupancy[i, j]
+                free_z = np.where(col == 0)[0]
+                if free_z.size == 0:
+                    continue
+                top_occ = np.where(col == 1)[0]
+                top_h = -1 if top_occ.size == 0 else int(top_occ[-1])
+                for z in free_z:
+                    if z <= top_h:
+                        wasted += 1
+                        continue
+                    if height - z < min_free_height:
+                        wasted += 1
+        return wasted
+
+    def get_weighted_voxel_grid(self):
+        width, length, height = self.plain_size
+        weighted = np.ones((width, length, height), dtype=np.int32)
+        weighted[self.occupancy == 1] = 2
+
+        min_free_height = 2
+        for i in range(width):
+            for j in range(length):
+                col = self.occupancy[i, j]
+                occ_idx = np.where(col == 1)[0]
+                top_h = -1 if occ_idx.size == 0 else int(occ_idx[-1])
+                for z in range(height):
+                    if weighted[i, j, z] == 2:
+                        continue
+                    if z <= top_h:
+                        weighted[i, j, z] = 0
+                    elif height - z < min_free_height:
+                        weighted[i, j, z] = 0
+        return weighted
 
     def calculate_center_of_mass(self):
         """
@@ -325,7 +419,9 @@ class Space(object):
             self.boxes.append(Box(x, y, z, lx, ly, new_h)) # record rotated box
             self.flags.append(flag)
             self.plain = self.update_height_graph(plain, self.boxes[-1])
+            self.occupancy[lx:lx + x, ly:ly + y, new_h:new_h + z] = 1
             self.height = max(self.height, new_h + z)
+            self.last_wasted_volume = self.get_wasted_volume()
             return True
         return False
 

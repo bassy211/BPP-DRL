@@ -66,7 +66,7 @@ class ReorderTree(object):
         self.mask_shape = env.bin_size[:2]
         self.mask_len = self.mask_shape[0] * self.mask_shape[1]
         # copy the env and box list
-        self.env = copy.deepcopy(env)
+        self.env = env.clone_for_search() if hasattr(env, 'clone_for_search') else copy.deepcopy(env)
         self.box_list = copy.deepcopy(box_list)
         # threshold
         self.p_bound = p_bound
@@ -223,7 +223,7 @@ class ReorderTree(object):
         self.search(next_masks, cur_env, next_idxs, next_node, next_value, action)
 
     def get_baseline(self):
-        env = copy.deepcopy(self.env)
+        env = self.env.clone_for_search() if hasattr(self.env, 'clone_for_search') else copy.deepcopy(self.env)
         obs = env.cur_observation
         nor_exp = 0
         nor_act = None
@@ -248,7 +248,7 @@ class ReorderTree(object):
         root.max_value = nor_exp 
         root.action = nor_act
         for i in range(self.times):
-            sim_env = copy.deepcopy(self.env)
+            sim_env = self.env.clone_for_search() if hasattr(self.env, 'clone_for_search') else copy.deepcopy(self.env)
             res_idxs = list(range(self.box_num))
             masks = np.ones((self.box_num, self.mask_len))
             self.search(masks, sim_env, res_idxs, root, 0, None)

@@ -8,7 +8,7 @@ def _flatten_helper(T, N, _tensor):
 # the shape of observation: batch * cpu * length
 class RolloutStorage(object):
     def __init__(self, num_steps, num_processes, obs_shape, action_space,
-                 recurrent_hidden_state_size,can_give_up, enable_rotation, pallet_size):
+                 recurrent_hidden_state_size,can_give_up, enable_rotation, pallet_size, use_pusnet=False):
         self.obs = torch.zeros(num_steps + 1, num_processes, *obs_shape)
         self.recurrent_hidden_states = torch.zeros(
             num_steps + 1, num_processes, recurrent_hidden_state_size)
@@ -24,7 +24,9 @@ class RolloutStorage(object):
         if action_space.__class__.__name__ == 'Discrete':
             self.actions = self.actions.long()
         self.masks = torch.ones(num_steps + 1, num_processes, 1)
-        if enable_rotation:
+        if use_pusnet:
+            self.location_masks = torch.zeros(num_steps + 1, num_processes, 2 * pallet_size**2)
+        elif enable_rotation:
             self.location_masks = torch.zeros(num_steps+1, num_processes, 2 * pallet_size**2)
         elif can_give_up:
             self.location_masks = torch.zeros(num_steps+1, num_processes, pallet_size**2 +1)

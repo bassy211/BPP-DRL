@@ -45,7 +45,15 @@ def get_args():
         '--algorithm', default='acktr', type=str,  help='algorithm used, acktr|ppo|a2c'
     )
     parser.add_argument(
-        '--gamma', default=1.0, type=float,  help='discount factor for rewards (default: 1.0)'
+        '--use-pusnet', action='store_true', default=False,
+        help='enable packing-unpacking synergistic policy and action modulation'
+    )
+    parser.add_argument(
+        '--pusnet-no-modulation', action='store_true', default=False,
+        help='disable heuristic action modulation in pusnet mode'
+    )
+    parser.add_argument(
+        '--gamma', default=0.95, type=float,  help='discount factor for rewards (default: 0.95)'
     )
     parser.add_argument(
         '--entropy_coef', default=0.01, type=float,  help='entropy term coefficient (default: 0.01)'
@@ -60,7 +68,10 @@ def get_args():
         '--hidden_size', default=256, type=int,  help='hidden layer cell number (default: 256)'
     )
     parser.add_argument(
-        '--learning_rate', default=1e-6, type=float,  help='learning rate for a2c (default: 1e-6)'
+        '--learning_rate', default=3e-3, type=float,  help='learning rate for a2c (default: 3e-3)'
+    )
+    parser.add_argument(
+        '--lr', default=3e-3, type=float,  help='learning rate used by acktr/a2c wrapper (default: 3e-3)'
     )
     parser.add_argument(
         '--eps', default=1e-5, type=float,  help='RMSprop optimizer epsilon (default: 1e-5)'
@@ -113,14 +124,70 @@ def get_args():
     parser.add_argument(
         '--seed', default=1, type=int,  help='random seed (default: 1)'
     )
+    parser.add_argument(
+        '--reward-alpha', default=1.0, type=float,
+        help='coefficient alpha for incentive reward term r_v'
+    )
+    parser.add_argument(
+        '--reward-beta', default=1.0, type=float,
+        help='coefficient beta for incentive reward term r_sv'
+    )
+    parser.add_argument(
+        '--reward-sigma', default=0.8, type=float,
+        help='coefficient sigma for punitive reward term r_w'
+    )
+    parser.add_argument(
+        '--reward-tau', default=0.8, type=float,
+        help='coefficient tau for punitive reward term r_cw'
+    )
+    parser.add_argument(
+        '--invalid-logit-penalty', default=1e8, type=float,
+        help='large penalty used to suppress invalid logits in action modulation'
+    )
+    parser.add_argument(
+        '--enable-online-funsearch', action='store_true', default=False,
+        help='enable online heuristic evolution with optional LLM generation'
+    )
+    parser.add_argument(
+        '--funsearch-interval', default=20, type=int,
+        help='run one online funsearch cycle every N policy updates'
+    )
+    parser.add_argument(
+        '--funsearch-sample-budget', default=128, type=int,
+        help='max observation samples used in each funsearch cycle'
+    )
+    parser.add_argument(
+        '--funsearch-candidates', default=4, type=int,
+        help='number of candidate programs generated per funsearch cycle'
+    )
+    parser.add_argument(
+        '--funsearch-topk', default=8, type=int,
+        help='top-k programs considered as parents in funsearch'
+    )
+    parser.add_argument(
+        '--llm-enable', action='store_true', default=False,
+        help='enable LLM-based heuristic code generation (falls back to mutation if unavailable)'
+    )
+    parser.add_argument(
+        '--llm-model', default='gpt-4o-mini', type=str,
+        help='LLM model name used for heuristic generation'
+    )
+    parser.add_argument(
+        '--branch-update-mode', default='alternating', type=str,
+        help='branch update policy in pusnet training: alternating|pack|unpack|auto'
+    )
     args = parser.parse_args()
 
     args.device = "cuda:" + str(args.device) if args.use_cuda else "cpu"
     args.bin_size = args.container_size
     args.pallet_size = args.container_size[0]
-    args.channel = 4 # channels of CNN: 4 for hmap+next box, 5 for hmap nextbox+truemask
+    args.channel = 4 # legacy hmap + size maps channel count
     args.data_type = args.item_seq
     args.test = (args.mode == 'test')
+    args.use_action_modulation = (args.use_pusnet and (not args.pusnet_no_modulation))
+    args.action_type_num = 2 if args.use_pusnet else 1
+    if args.branch_update_mode not in ['alternating', 'pack', 'unpack', 'auto']:
+        raise Exception('Unsupported branch update mode \"%s\"' % args.branch_update_mode)
 
     box_range = args.item_size_range
     box_size_set = []
@@ -156,6 +223,13 @@ def get_args():
     print('enable_rotation: ', args.enable_rotation)
     print('use cuda:  ', args.use_cuda)
     print('target total items: ', args.target_total)
+    print('use pusnet: ', args.use_pusnet)
+    print('action modulation: ', args.use_action_modulation)
+    print('reward coeffs (alpha,beta,sigma,tau): ',
+          (args.reward_alpha, args.reward_beta, args.reward_sigma, args.reward_tau))
+    print('online funsearch: ', args.enable_online_funsearch)
+    print('llm generation enabled: ', args.llm_enable)
+    print('branch update mode: ', args.branch_update_mode)
     time.sleep(0.5)
     # generate item size set
     item_set = []

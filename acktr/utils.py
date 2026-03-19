@@ -3,6 +3,7 @@ import os
 import torch.nn as nn
 import numpy as np
 from acktr.envs import VecNormalize
+from acktr.pusnet_utils import build_pusnet_action_mask
 
 
 def check_box(plain, x, y, lx, ly, z, container_size):
@@ -92,6 +93,10 @@ def get_rotation_mask(observation, container_size):
         action_mask[:] = 1
 
     return action_mask
+
+
+def get_pusnet_action_mask(observation, container_size, use_modulation=True):
+    return build_pusnet_action_mask(observation, container_size, use_modulation=use_modulation)
 
 def get_vec_normalize(venv):
     if isinstance(venv, VecNormalize):
