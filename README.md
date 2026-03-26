@@ -1,5 +1,7 @@
 python main.py --mode train --use-cuda --item-seq trajectory --data-name processed_train.pt --enable-rotation --save_model --tensorboard --target-total 60\
-python main.py --mode test --load-model --use-cuda --data-name processed_test.pt --enable-rotation --target-total 60 --load-name Bpp-v02026.01.09-13-25.pt
+python main.py --mode test --load-model --use-cuda --data-name processed_test.pt --enable-rotation --target-total 60 --load-name Bpp-v02026.01.09-13-25.pt\
+python main.py --mode train --use-cuda --tensorboard --save_model --enable_rotation --item-seq cut1\
+python main.py --mode test --load-model --use-cuda --data-name cut_1.pt --enable_rotation --load-name yang.pt
 
 # Online 3D Bin Packing with Constrained Deep Reinforcement Learning
 
