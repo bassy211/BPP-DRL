@@ -230,7 +230,7 @@ class OnlineFunSearchManager(object):
                     return -1e9
                 vals.append(self._pack_objective(np.asarray(score), feasible, plain))
             else:
-                feasible = unpack_feasibility_map(voxel)
+                feasible = unpack_feasibility_map(voxel, item=item)
                 if feasible.sum() == 0:
                     continue
                 try:

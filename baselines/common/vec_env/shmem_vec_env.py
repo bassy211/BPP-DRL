@@ -81,12 +81,24 @@ class ShmemVecEnv(VecEnv):
 
     def close_extras(self):
         if self.waiting_step:
-            self.step_wait()
+            try:
+                self.step_wait()
+            except (EOFError, BrokenPipeError, OSError):
+                pass
         for pipe in self.parent_pipes:
-            pipe.send(('close', None))
+            try:
+                pipe.send(('close', None))
+            except (EOFError, BrokenPipeError, OSError):
+                pass
         for pipe in self.parent_pipes:
-            pipe.recv()
-            pipe.close()
+            try:
+                pipe.recv()
+            except (EOFError, BrokenPipeError, OSError):
+                pass
+            try:
+                pipe.close()
+            except OSError:
+                pass
         for proc in self.procs:
             proc.join()
 
@@ -136,6 +148,9 @@ def _subproc_worker(pipe, parent_pipe, env_fn_wrapper, obs_bufs, obs_shapes, obs
                 break
             else:
                 raise RuntimeError('Got unrecognized cmd %s' % cmd)
+    except (EOFError, BrokenPipeError, OSError):
+        # Parent process closed the IPC pipe; exit worker quietly.
+        pass
     except KeyboardInterrupt:
         print('ShmemVecEnv worker: got KeyboardInterrupt')
     finally:

@@ -130,7 +130,7 @@ def train_model(args):
         else:
             box_mask = get_rotation_mask(observation, args.container_size)
         location_masks.append(box_mask)
-    location_masks = torch.FloatTensor(location_masks).to(device)
+    location_masks = torch.as_tensor(np.asarray(location_masks, dtype=np.float32), device=device)
 
     rollouts.obs[0].copy_(obs)
     rollouts.location_masks[0].copy_(location_masks)
@@ -159,19 +159,25 @@ def train_model(args):
             topk=args.funsearch_topk,
         )
 
-    j = 0
     index = 0
-    while True:
-        j += 1
+    for j in range(1, args.train_epochs + 1):
+        iter_t_act = 0.0
+        iter_t_env = 0.0
+        iter_t_mask = 0.0
+        iter_t_update = 0.0
         for step in range(args.num_steps):
             # Sample actions
+            t_act0 = time.perf_counter()
             with torch.no_grad():
                 value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
                     rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                     rollouts.masks[step], location_masks)
+            iter_t_act += (time.perf_counter() - t_act0)
 
             location_masks = []
+            t_env0 = time.perf_counter()
             obs, reward, done, infos = envs.step(action)
+            iter_t_env += (time.perf_counter() - t_env0)
 
             if funsearch_manager is not None:
                 obs_np = obs.detach().cpu().numpy()
@@ -184,6 +190,7 @@ def train_model(args):
                 if 'episode' in infos[i].keys():
                     episode_rewards.append(infos[i]['episode']['r'])
                     episode_ratio.append(infos[i]['ratio'])
+            t_mask0 = time.perf_counter()
             for observation in obs:
                 if args.use_pusnet:
                     box_mask = get_pusnet_action_mask(observation, args.container_size, use_modulation=args.use_action_modulation)
@@ -192,7 +199,8 @@ def train_model(args):
                 else:
                     box_mask = get_rotation_mask(observation, args.container_size)
                 location_masks.append(box_mask)
-            location_masks = torch.FloatTensor(location_masks).to(device)
+            location_masks = torch.as_tensor(np.asarray(location_masks, dtype=np.float32), device=device)
+            iter_t_mask += (time.perf_counter() - t_mask0)
 
             # If done then clean the history of observations.
             masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
@@ -206,7 +214,9 @@ def train_model(args):
 
         rollouts.compute_returns(next_value, False, args.gamma, 0.95, False)
         # value_loss, action_loss, dist_entropy, prob_loss = agent.update(rollouts)
+        t_upd0 = time.perf_counter()
         value_loss, action_loss, dist_entropy, prob_loss, graph_loss = agent.update(rollouts)
+        iter_t_update += (time.perf_counter() - t_upd0)
 
         rollouts.after_update()
         if args.save_model:
@@ -230,7 +240,7 @@ def train_model(args):
 
         # print useful information of training
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
-            total_num_steps = (j + 1) * args.num_processes * args.num_steps
+            total_num_steps = j * args.num_processes * args.num_steps
             end = time.time()
             index += 1
             print(
@@ -251,6 +261,15 @@ def train_model(args):
                 print('Active branch: {}, branch samples: {}'.format(
                     getattr(agent, 'last_active_branch', 'na'),
                     getattr(agent, 'last_branch_samples', -1)))
+            if args.profile_train_speed:
+                iter_total = iter_t_act + iter_t_env + iter_t_mask + iter_t_update
+                denom = max(iter_total, 1e-8)
+                print('Timing breakdown (ms/update): act={:.2f} ({:.1f}%), env={:.2f} ({:.1f}%), mask={:.2f} ({:.1f}%), update={:.2f} ({:.1f}%)'.format(
+                    iter_t_act * 1000.0, iter_t_act * 100.0 / denom,
+                    iter_t_env * 1000.0, iter_t_env * 100.0 / denom,
+                    iter_t_mask * 1000.0, iter_t_mask * 100.0 / denom,
+                    iter_t_update * 1000.0, iter_t_update * 100.0 / denom,
+                ))
 
             if args.tensorboard:
                 writer.add_scalar('The average rewards', np.mean(episode_rewards), j)

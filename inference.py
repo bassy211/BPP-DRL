@@ -24,7 +24,7 @@ def generate_real_time_box():
     height = random.randint(2, 5)
     return [depth, width, height]
 
-def run_sequence(nmodel, raw_env, preview_num, c_bound):
+def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reorder_pos_topk=1):
     env = raw_env.clone_for_search() if hasattr(raw_env, 'clone_for_search') else copy.deepcopy(raw_env)
     obs = env.cur_observation
     default_counter = 0
@@ -33,7 +33,14 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
     while True:
         box_list = env.box_creator.preview(preview_num)
         
-        tree = ReorderTree(nmodel, box_list, env, times=100)
+        tree = ReorderTree(
+            nmodel,
+            box_list,
+            env,
+            p_bound=c_bound,
+            times=reorder_times,
+            pos_topk=reorder_pos_topk,
+        )
         act, val, default = tree.reorder_search()
         obs, _, done, info = env.step([act])
 
@@ -136,11 +143,18 @@ def inference(url, args, pruning_threshold=0.5):
     print('  预览盒子数量:', args.preview)
     print('  容器尺寸:', args.container_size)
     print('  启用旋转:', args.enable_rotation)
-    c_bound = pruning_threshold
+    c_bound = getattr(args, 'reorder_p_bound', pruning_threshold)
     env.reset()
     
     try:
-        ratio, counter, time, depen_rate, center_offset = run_sequence(nmodel, env, args.preview, c_bound)
+        ratio, counter, time, depen_rate, center_offset = run_sequence(
+            nmodel,
+            env,
+            args.preview,
+            c_bound,
+            reorder_times=args.reorder_times,
+            reorder_pos_topk=args.reorder_pos_topk,
+        )
 
         print()
         print('----------------------------------------------')

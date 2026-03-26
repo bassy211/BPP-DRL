@@ -58,7 +58,7 @@ class PackingGame(gym.Env):
     def clone_for_search(self):
         # Use a lightweight clone to avoid deepcopying huge dataset objects.
         new_env = copy.copy(self)
-        new_env.space = copy.deepcopy(self.space)
+        new_env.space = self.space.clone() if hasattr(self.space, 'clone') else copy.deepcopy(self.space)
         new_env.buffer = copy.deepcopy(self.buffer)
 
         src_creator = self.box_creator
@@ -163,13 +163,14 @@ class PackingGame(gym.Env):
             is_unpack = idx >= self.area
             cell_idx = idx - self.area if is_unpack else idx
             succeeded = False
+            unpack_check = None
 
             if not is_unpack:
                 succeeded = self.space.drop_box(self.next_box, cell_idx, False)
                 if succeeded:
                     self._consume_current_item()
             else:
-                removed = self.space.unpack_box_at(cell_idx)
+                removed, unpack_check = self.space.unpack_box_at_constrained(cell_idx, self.next_box)
                 if removed is not None:
                     self.buffer.append(removed)
                     succeeded = True
@@ -189,11 +190,12 @@ class PackingGame(gym.Env):
                 'center_offset': self.space.get_center_offset(),
                 'buffer_size': len(self.buffer),
                 'succeeded': succeeded,
+                'unpack_check': unpack_check,
             }
             return self.cur_observation, reward, done, info
 
         flag = False
-        if idx > self.area:
+        if idx >= self.area:
             assert self.can_rotate
             idx = idx - self.area
             flag = True

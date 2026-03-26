@@ -10,6 +10,8 @@ class nnModel(object):
     def __init__(self, url, args):
         area = args.container_size[0]*args.container_size[1]
         self.use_pusnet = bool(getattr(args, 'use_pusnet', False))
+        self.enable_rotation = bool(getattr(args, 'enable_rotation', False))
+        self.container_size = tuple(args.container_size)
         self.alen = area * 2 if self.use_pusnet else area * (1+args.enable_rotation)
         self.olen = area * args.container_size[2] + 3 * area if self.use_pusnet else args.channel * area
         self.height = args.container_size[2]
@@ -72,7 +74,18 @@ class nnModel(object):
 
         poss_in_actions = softmax(poss)
         if use_mask:
-            poss_in_actions = poss_in_actions * pred
+            if self.use_pusnet:
+                action_mask = pred
+            elif self.enable_rotation:
+                action_mask = np.asarray(get_rotation_mask(x.squeeze(0), self.container_size), dtype=np.float32)
+            else:
+                action_mask = np.asarray(get_possible_position(x.squeeze(0), self.container_size), dtype=np.float32)
+
+            if np.sum(action_mask) <= 0:
+                action_mask = np.ones_like(poss_in_actions)
+            poss_in_actions = poss_in_actions * action_mask
+            if np.sum(poss_in_actions) <= 0:
+                poss_in_actions = softmax(poss)
         poss_in_actions = np.reshape(poss_in_actions, newshape=(-1,))
         return value, poss_in_actions
 

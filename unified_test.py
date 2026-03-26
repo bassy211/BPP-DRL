@@ -7,7 +7,7 @@ import numpy as np
 from gym.envs.registration import register
 from acktr.arguments import get_args
 
-def run_sequence(nmodel, raw_env, preview_num, c_bound):
+def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reorder_pos_topk=1):
     env = raw_env.clone_for_search() if hasattr(raw_env, 'clone_for_search') else copy.deepcopy(raw_env)
     obs = env.cur_observation
     default_counter = 0
@@ -16,7 +16,14 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
     while True:
         box_list = env.box_creator.preview(preview_num)
         # print(box_list)
-        tree = ReorderTree(nmodel, box_list, env, times=100)
+        tree = ReorderTree(
+            nmodel,
+            box_list,
+            env,
+            p_bound=c_bound,
+            times=reorder_times,
+            pos_topk=reorder_pos_topk,
+        )
         act, val, default = tree.reorder_search()
         obs, _, done, info = env.step([act])
         if done:
@@ -49,13 +56,20 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     ratios = []
     center_offsets = []  # 收集质心偏移量
     avg_ratio, avg_counter, avg_time, avg_drate = 0.0, 0.0, 0.0, 0.0
-    c_bound = pruning_threshold
+    c_bound = getattr(args, 'reorder_p_bound', pruning_threshold)
     for i in range(times):
         if i % 10 == 0:
             print('case', i+1)
         env.reset()
         env.box_creator.preview(500)
-        ratio, counter, time, depen_rate, center_offset = run_sequence(nmodel, env, args.preview, c_bound)
+        ratio, counter, time, depen_rate, center_offset = run_sequence(
+            nmodel,
+            env,
+            args.preview,
+            c_bound,
+            reorder_times=args.reorder_times,
+            reorder_pos_topk=args.reorder_pos_topk,
+        )
         avg_ratio += ratio
         ratios.append(ratio)
         center_offsets.append(center_offset)

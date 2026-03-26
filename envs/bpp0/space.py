@@ -28,6 +28,13 @@ class Box(object):
     def standardize(self):
         return tuple([self.x, self.y, self.z, self.lx, self.ly, self.lz])
 
+    def clone(self):
+        return Box(
+            int(self.x), int(self.y), int(self.z),
+            int(self.lx), int(self.ly), int(self.lz),
+            density=float(self.density)
+        )
+
 
 class Space(object):
     def __init__(self, width=10, length=10, height=10):
@@ -41,6 +48,16 @@ class Space(object):
 
     def print_height_graph(self):
         print(self.plain)
+
+    def clone(self):
+        new_space = Space(int(self.plain_size[0]), int(self.plain_size[1]), int(self.plain_size[2]))
+        new_space.plain = np.array(self.plain, copy=True)
+        new_space.occupancy = np.array(self.occupancy, copy=True)
+        new_space.boxes = [box.clone() for box in self.boxes]
+        new_space.flags = [bool(f) for f in self.flags]
+        new_space.height = int(self.height)
+        new_space.last_wasted_volume = int(self.last_wasted_volume)
+        return new_space
 
     def get_height_graph(self):
         plain = np.zeros(shape=self.plain_size[:2], dtype=np.int32)
@@ -113,6 +130,70 @@ class Space(object):
         self.rebuild_state()
         self.last_wasted_volume = self.get_wasted_volume()
         return (removed.x, removed.y, removed.z)
+
+    def _simulate_wasted_after_removal(self, top_idx):
+        if top_idx < 0 or top_idx >= len(self.boxes):
+            return None
+        removed_box = self.boxes.pop(top_idx)
+        removed_flag = self.flags.pop(top_idx)
+        self.rebuild_state()
+        wasted_after = self.get_wasted_volume()
+
+        self.boxes.insert(top_idx, removed_box)
+        self.flags.insert(top_idx, removed_flag)
+        self.rebuild_state()
+        return wasted_after
+
+    def evaluate_unpack_candidate(self, idx, current_item):
+        lx, ly = self.idx_to_position(idx)
+        top_idx, top_box = self.get_top_box_at(lx, ly)
+        if top_box is None:
+            return {
+                'valid': False,
+                'reason': 'no_top_item',
+                'top_idx': None,
+                'removed_item': None,
+                'wasted_improved': False,
+            }
+
+        wasted_before = self.get_wasted_volume()
+        wasted_after = self._simulate_wasted_after_removal(top_idx)
+        if wasted_after is None:
+            return {
+                'valid': False,
+                'reason': 'invalid_simulation',
+                'top_idx': None,
+                'removed_item': None,
+                'wasted_improved': False,
+            }
+
+        removed_vol = int(top_box.x * top_box.y * top_box.z)
+        cur_vol = int(current_item[0] * current_item[1] * current_item[2])
+        wasted_improved = (wasted_after < wasted_before)
+
+        # Rule 1: only top-layer items can be unpacked (enforced by get_top_box_at)
+        # Rule 2: avoid unpacking larger-than-current item unless it improves wasted space
+        size_allowed = removed_vol <= cur_vol
+        valid = size_allowed or wasted_improved
+
+        return {
+            'valid': bool(valid),
+            'reason': 'ok' if valid else 'size_constraint',
+            'top_idx': int(top_idx),
+            'removed_item': (int(top_box.x), int(top_box.y), int(top_box.z)),
+            'wasted_improved': bool(wasted_improved),
+        }
+
+    def unpack_box_at_constrained(self, idx, current_item):
+        check = self.evaluate_unpack_candidate(idx, current_item)
+        if not check['valid']:
+            return None, check
+        top_idx = check['top_idx']
+        removed = self.boxes.pop(top_idx)
+        self.flags.pop(top_idx)
+        self.rebuild_state()
+        self.last_wasted_volume = self.get_wasted_volume()
+        return (removed.x, removed.y, removed.z), check
 
     def get_unpack_mask(self):
         width, length, _ = self.plain_size

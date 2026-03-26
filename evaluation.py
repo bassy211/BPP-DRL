@@ -34,7 +34,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                 container = args.container_size if args is not None else [10, 10, 10]
                 box_mask = get_possible_position(observation, container)
             location_masks.append(box_mask)
-        location_masks = torch.FloatTensor(location_masks).to(device)
+        location_masks = torch.as_tensor(np.asarray(location_masks, dtype=np.float32), device=device)
 
         with torch.no_grad():
             _, action, _, eval_recurrent_hidden_states = actor_critic.act(

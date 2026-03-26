@@ -56,7 +56,7 @@ class Node(object):
 
 # FOR ENV 'MASK'
 class ReorderTree(object):
-    def __init__(self, nmodel, box_list, env, encode=True, p_bound=0.8, v_bound=0.1, times=100):
+    def __init__(self, nmodel, box_list, env, encode=True, p_bound=0.8, v_bound=0.1, times=100, pos_topk=None):
         self.encode = encode
         # the box number used for reordering
         self.box_num = len(box_list)
@@ -71,7 +71,10 @@ class ReorderTree(object):
         # threshold
         self.p_bound = p_bound
         self.v_bound = v_bound
-        self.pos_num = int(1 / self.p_bound)
+        if pos_topk is not None:
+            self.pos_num = max(1, int(pos_topk))
+        else:
+            self.pos_num = max(1, int(1 / max(self.p_bound, 1e-6)))
         self.times = min(times, math.factorial(self.box_num - 1))
 
     def get_order_mask(self, smask, box_size):
@@ -129,9 +132,30 @@ class ReorderTree(object):
         revised_obs[0] = new_obs
         revised_obs = revised_obs.reshape((-1,))
         val, poss = self.nmodel.evaluate(revised_obs)
-        pos_candidates = list(np.argsort(poss)[-self.pos_num:])
+        pos_candidates = list(np.argsort(poss)[-self.pos_num:][::-1])
         wt = self.will_terminate(new_obs)
         return val, pos_candidates, wt
+
+    def select_best_position(self, cur_env, cur_box, pos_candidates):
+        best_pos = None
+        best_score = -1e9
+
+        for pos in pos_candidates:
+            sim_env = cur_env.clone_for_search() if hasattr(cur_env, 'clone_for_search') else copy.deepcopy(cur_env)
+            next_obs, reward, done, _ = sim_env.step([pos])
+            if done:
+                score = -1e9
+            else:
+                next_val, _ = self.nmodel.evaluate(next_obs)
+                score = reward + next_val
+
+            if score > best_score:
+                best_score = score
+                best_pos = pos
+
+        if best_pos is None:
+            best_pos = pos_candidates[0]
+        return best_pos
 
     def search(self, masks, cur_env, res_idxs, cur_node, cur_value, action):
         assert cur_node is not None
@@ -168,8 +192,7 @@ class ReorderTree(object):
         # print(idx, cur_box)
 
         val, pos_candidates, will_terminate = self.evaluate(cur_obs, masks, idx)
-        pos = pos_candidates[-1]
-        assert len(pos_candidates) == 1
+        pos = self.select_best_position(cur_env, cur_box, pos_candidates)
 
         # will_terminate = False
         # # if may_terminate:
@@ -208,12 +231,12 @@ class ReorderTree(object):
                 return
 
         # copy and update [res_idxs]
-        next_idxs = res_idxs
+        next_idxs = list(res_idxs)
         next_idxs.remove(idx)
         # copy and update [env]
         # assert not done
         # copy and update [mask]
-        next_masks = masks
+        next_masks = np.copy(masks)
         next_masks[idx] = self.update_mask(next_masks[idx], cur_box, pos)
         # next value
         next_value = cur_value + reward

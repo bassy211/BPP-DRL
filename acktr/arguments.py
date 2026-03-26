@@ -104,6 +104,14 @@ def get_args():
         '--num_steps', default=5, type=int,  help='number of forward steps in A2C (default: 5)'
     )
     parser.add_argument(
+        '--train-epochs', default=12000, type=int,
+        help='fixed number of training updates/epochs in train mode (default: 12000)'
+    )
+    parser.add_argument(
+        '--steps-per-epoch', default=5120, type=int,
+        help='fixed number of collected transitions per training epoch (default: 5120)'
+    )
+    parser.add_argument(
         '--enable_rotation', action='store_true', default=False,  help='whether agent can rotate box'
     )
     parser.add_argument(
@@ -120,6 +128,18 @@ def get_args():
     )
     parser.add_argument(
         '--target-total', default=50, type=int, help='the target total number of items after scaling'
+    )
+    parser.add_argument(
+        '--reorder-times', default=160, type=int,
+        help='simulation budget for reorder tree search during test/inference'
+    )
+    parser.add_argument(
+        '--reorder-pos-topk', default=3, type=int,
+        help='top-k action positions considered per reorder expansion'
+    )
+    parser.add_argument(
+        '--reorder-p-bound', default=0.5, type=float,
+        help='position candidate bound for reorder tree (used when top-k is not explicitly set)'
     )
     parser.add_argument(
         '--seed', default=1, type=int,  help='random seed (default: 1)'
@@ -176,6 +196,10 @@ def get_args():
         '--branch-update-mode', default='alternating', type=str,
         help='branch update policy in pusnet training: alternating|pack|unpack|auto'
     )
+    parser.add_argument(
+        '--profile-train-speed', action='store_true', default=False,
+        help='print per-stage timing breakdown during training logs'
+    )
     args = parser.parse_args()
 
     args.device = "cuda:" + str(args.device) if args.use_cuda else "cpu"
@@ -186,6 +210,19 @@ def get_args():
     args.test = (args.mode == 'test')
     args.use_action_modulation = (args.use_pusnet and (not args.pusnet_no_modulation))
     args.action_type_num = 2 if args.use_pusnet else 1
+
+    if args.mode == 'train':
+        if args.steps_per_epoch <= 0:
+            raise Exception('steps_per_epoch must be positive')
+        if args.train_epochs <= 0:
+            raise Exception('train_epochs must be positive')
+        if args.num_processes <= 0:
+            raise Exception('num_processes must be positive')
+        if args.steps_per_epoch % args.num_processes != 0:
+            raise Exception('steps_per_epoch (%d) must be divisible by num_processes (%d)' %
+                            (args.steps_per_epoch, args.num_processes))
+        args.num_steps = args.steps_per_epoch // args.num_processes
+
     if args.branch_update_mode not in ['alternating', 'pack', 'unpack', 'auto']:
         raise Exception('Unsupported branch update mode \"%s\"' % args.branch_update_mode)
 
@@ -230,6 +267,9 @@ def get_args():
     print('online funsearch: ', args.enable_online_funsearch)
     print('llm generation enabled: ', args.llm_enable)
     print('branch update mode: ', args.branch_update_mode)
+    if args.mode == 'train':
+        print('fixed training protocol (epochs, steps_per_epoch, num_steps): ',
+              (args.train_epochs, args.steps_per_epoch, args.num_steps))
     time.sleep(0.5)
     # generate item size set
     item_set = []

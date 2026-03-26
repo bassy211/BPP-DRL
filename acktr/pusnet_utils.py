@@ -105,18 +105,6 @@ def pack_heuristic_map(plain, item, feasible):
     return heur
 
 
-def unpack_feasibility_map(voxel):
-    w, l, h = voxel.shape
-    occ = voxel == 2
-    feasible = np.zeros((w, l), dtype=np.int32)
-    for i in range(w):
-        for j in range(l):
-            col = np.where(occ[i, j])[0]
-            if len(col) > 0:
-                feasible[i, j] = 1
-    return feasible
-
-
 def unpack_heuristic_map(voxel, item, feasible):
     if feasible.sum() == 0:
         return feasible.copy()
@@ -131,7 +119,11 @@ def unpack_heuristic_map(voxel, item, feasible):
             if feasible[i, j] == 0:
                 continue
             top = np.where(occ[i, j])[0][-1]
-            removed_vol = 1
+            removed_vol = 0
+            z_ptr = int(top)
+            while z_ptr >= 0 and occ[i, j, z_ptr]:
+                removed_vol += 1
+                z_ptr -= 1
             if removed_vol > cur_vol:
                 continue
 
@@ -155,6 +147,47 @@ def unpack_heuristic_map(voxel, item, feasible):
     return heur
 
 
+def unpack_feasibility_map(voxel, item=None):
+    w, l, h = voxel.shape
+    occ = voxel == 2
+    feasible = np.zeros((w, l), dtype=np.int32)
+    cur_vol = None if item is None else max(1, int(item[0] * item[1] * item[2]))
+
+    for i in range(w):
+        for j in range(l):
+            col = np.where(occ[i, j])[0]
+            if len(col) == 0:
+                continue
+
+            # Top-layer check is implicit: we always refer to the top occupied voxel in this column.
+            top = int(col[-1])
+            if cur_vol is None:
+                feasible[i, j] = 1
+                continue
+
+            removed_est = 0
+            z_ptr = top
+            while z_ptr >= 0 and occ[i, j, z_ptr]:
+                removed_est += 1
+                z_ptr -= 1
+
+            cavity_gain = 0
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = i + dx, j + dy
+                if nx < 0 or ny < 0 or nx >= w or ny >= l:
+                    continue
+                ncol = np.where(occ[nx, ny])[0]
+                ntop = -1 if len(ncol) == 0 else int(ncol[-1])
+                cavity_gain += max(0, ntop - top)
+
+            wasted_improved_proxy = cavity_gain > 0
+            size_allowed = removed_est <= cur_vol
+            if size_allowed or wasted_improved_proxy:
+                feasible[i, j] = 1
+
+    return feasible
+
+
 def _to_binary_map(score, feasible, percentile=60):
     score = np.asarray(score, dtype=np.float32)
     if score.shape != feasible.shape:
@@ -173,7 +206,7 @@ def _to_binary_map(score, feasible, percentile=60):
 def build_pusnet_action_mask(observation, container_size, use_modulation=True):
     voxel, _, item = parse_pusnet_observation(observation, container_size)
     pack_feasible, plain = pack_feasibility_map(voxel, item, container_size)
-    unpack_feasible = unpack_feasibility_map(voxel)
+    unpack_feasible = unpack_feasibility_map(voxel, item=item)
 
     if not use_modulation:
         pack_fused = pack_feasible

@@ -63,28 +63,50 @@ class Policy(nn.Module):
         output = torch.where(input >= 0.5, a, b)
         return output
 
+    def _normalize_branch_probs(self, probs, mask):
+        eps = 1e-12
+        mass = probs.sum(dim=-1, keepdim=True)
+        n = probs.size(-1)
+        uniform = torch.full_like(probs, 1.0 / float(n))
+
+        mask_mass = mask.sum(dim=-1, keepdim=True)
+        mask_norm = mask / (mask_mass + eps)
+        fallback = torch.where(mask_mass > eps, mask_norm, uniform)
+        normalized = probs / (mass + eps)
+        return torch.where(mass > eps, normalized, fallback)
+
+    def _build_pusnet_distribution(self, vp, vu, pack_logits, unpack_logits, location_masks):
+        pack_mask = location_masks[:, :self.action_area].float()
+        unpack_mask = location_masks[:, self.action_area:].float()
+
+        # First suppress invalid actions in logit space, then apply softmax.
+        pack_logits = pack_logits.masked_fill(pack_mask <= 0, -self.invalid_logit_penalty)
+        unpack_logits = unpack_logits.masked_fill(unpack_mask <= 0, -self.invalid_logit_penalty)
+
+        pack_probs = torch.softmax(pack_logits, dim=-1) * pack_mask
+        unpack_probs = torch.softmax(unpack_logits, dim=-1) * unpack_mask
+
+        # Point-wise modulation in probability space, then renormalize per branch.
+        pack_probs = self._normalize_branch_probs(pack_probs, pack_mask)
+        unpack_probs = self._normalize_branch_probs(unpack_probs, unpack_mask)
+
+        choose_pack = (vp >= vu).float()
+        choose_unpack = 1.0 - choose_pack
+        final_probs = torch.cat((pack_probs * choose_pack, unpack_probs * choose_unpack), dim=-1)
+        final_probs = final_probs / (final_probs.sum(dim=-1, keepdim=True) + 1e-12)
+        dist = torch.distributions.Categorical(probs=final_probs)
+        value = torch.maximum(vp, vu)
+        return dist, value
+
     def act(self, inputs, rnn_hxs, masks, location_masks, deterministic=False):
         if self.use_pusnet:
             vp, vu, pack_logits, unpack_logits, rnn_hxs = self.base(inputs, rnn_hxs, masks)
-            pack_mask = location_masks[:, :self.action_area]
-            unpack_mask = location_masks[:, self.action_area:]
-
-            pack_logits = pack_logits.masked_fill(pack_mask <= 0, -self.invalid_logit_penalty)
-            unpack_logits = unpack_logits.masked_fill(unpack_mask <= 0, -self.invalid_logit_penalty)
-
-            choose_pack = (vp >= vu).float()
-            choose_unpack = 1.0 - choose_pack
-            pack_gate = torch.where(choose_pack > 0, torch.zeros_like(pack_logits), torch.full_like(pack_logits, -self.invalid_logit_penalty))
-            unpack_gate = torch.where(choose_unpack > 0, torch.zeros_like(unpack_logits), torch.full_like(unpack_logits, -self.invalid_logit_penalty))
-
-            final_logits = torch.cat((pack_logits + pack_gate, unpack_logits + unpack_gate), dim=-1)
-            dist = torch.distributions.Categorical(logits=final_logits)
+            dist, value = self._build_pusnet_distribution(vp, vu, pack_logits, unpack_logits, location_masks)
             if deterministic:
-                action = torch.argmax(final_logits, dim=-1, keepdim=True)
+                action = torch.argmax(dist.probs, dim=-1, keepdim=True)
             else:
                 action = dist.sample().unsqueeze(-1)
             action_log_probs = dist.log_prob(action.squeeze(-1)).unsqueeze(-1)
-            value = torch.maximum(vp, vu)
             return value, action, action_log_probs, rnn_hxs
 
         value, actor_features, rnn_hxs, graph = self.base(inputs, rnn_hxs, masks)
@@ -125,25 +147,12 @@ class Policy(nn.Module):
     def evaluate_actions(self, inputs, rnn_hxs, masks, action, location_masks):
         if self.use_pusnet:
             vp, vu, pack_logits, unpack_logits, rnn_hxs = self.base(inputs, rnn_hxs, masks)
-            pack_mask = location_masks[:, :self.action_area]
-            unpack_mask = location_masks[:, self.action_area:]
-
-            pack_logits = pack_logits.masked_fill(pack_mask <= 0, -self.invalid_logit_penalty)
-            unpack_logits = unpack_logits.masked_fill(unpack_mask <= 0, -self.invalid_logit_penalty)
-
-            choose_pack = (vp >= vu).float()
-            choose_unpack = 1.0 - choose_pack
-            pack_gate = torch.where(choose_pack > 0, torch.zeros_like(pack_logits), torch.full_like(pack_logits, -self.invalid_logit_penalty))
-            unpack_gate = torch.where(choose_unpack > 0, torch.zeros_like(unpack_logits), torch.full_like(unpack_logits, -self.invalid_logit_penalty))
-            final_logits = torch.cat((pack_logits + pack_gate, unpack_logits + unpack_gate), dim=-1)
-
-            dist = torch.distributions.Categorical(logits=final_logits)
+            dist, value = self._build_pusnet_distribution(vp, vu, pack_logits, unpack_logits, location_masks)
             action_log_probs = dist.log_prob(action.squeeze(-1)).unsqueeze(-1)
             dist_entropy = dist.entropy().mean()
 
-            bad_prob = torch.zeros_like(final_logits)
+            bad_prob = torch.zeros_like(dist.probs)
             pred_mask = location_masks
-            value = torch.maximum(vp, vu)
             return value, action_log_probs, dist_entropy, rnn_hxs, bad_prob, pred_mask
 
         value, actor_features, rnn_hxs, graph = self.base(inputs, rnn_hxs, masks)

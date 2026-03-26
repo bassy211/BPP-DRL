@@ -4,6 +4,7 @@ import gym
 import numpy as np
 import torch
 from gym.spaces.box import Box
+from gym.envs.registration import register
 from baselines import bench
 from baselines.common.vec_env import VecEnvWrapper
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
@@ -28,8 +29,26 @@ try:
 except ImportError:
     pass
 
+
+def _ensure_bpp_env_registered():
+    try:
+        gym.spec('Bpp-v0')
+        return
+    except Exception:
+        pass
+    try:
+        register(
+            id='Bpp-v0',
+            entry_point='envs.bpp0:PackingGame',
+        )
+    except Exception:
+        # If another process already registered it, ignore duplicate errors.
+        pass
+
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, args):
     def _thunk():
+        if env_id == 'Bpp-v0':
+            _ensure_bpp_env_registered()
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
             env = dm_control2gym.make(domain_name=domain, task_name=task)
@@ -102,6 +121,8 @@ def make_vec_envs(env_name,
             If you don't specify observation_space, we'll have to create a dummy
             environment to get it.
         """
+        if env_name == 'Bpp-v0':
+            _ensure_bpp_env_registered()
         env = gym.make(env_name,
                        enable_rotation=args.enable_rotation,
                        box_set=args.box_size_set, container_size=args.container_size, test = False,
@@ -112,7 +133,8 @@ def make_vec_envs(env_name,
                        reward_sigma = args.reward_sigma,
                        reward_tau = args.reward_tau)
         spaces = [env.observation_space, env.action_space]
-        envs = ShmemVecEnv(envs, spaces, context='fork')
+        mp_context = 'spawn' if str(device).startswith('cuda') else 'fork'
+        envs = ShmemVecEnv(envs, spaces, context=mp_context)
 
         # envs = DummyVecEnv(envs)
     else:
