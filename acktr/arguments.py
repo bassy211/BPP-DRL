@@ -127,7 +127,7 @@ def get_args():
         '--save_dir', default='./saved_models/', help='directory to save agent logs (default: ./saved_models/)'
     )
     parser.add_argument(
-        '--target-total', default=50, type=int, help='the target total number of items after scaling'
+        '--target-total', default=60, type=int, help='the target total number of items after scaling'
     )
     parser.add_argument(
         '--reorder-times', default=160, type=int,
