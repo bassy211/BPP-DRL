@@ -54,6 +54,8 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     print('Known item number: ', args.preview)
     times = args.cases
     ratios = []
+    counters = []
+    times_list = []
     center_offsets = []  # 收集质心偏移量
     avg_ratio, avg_counter, avg_time, avg_drate = 0.0, 0.0, 0.0, 0.0
     c_bound = getattr(args, 'reorder_p_bound', pruning_threshold)
@@ -74,16 +76,34 @@ def unified_test(url,  args, pruning_threshold = 0.5):
         ratios.append(ratio)
         center_offsets.append(center_offset)
         avg_counter += counter
+        counters.append(counter)
         avg_time += time
+        times_list.append(time)
         avg_drate += depen_rate
 
     print()
     print('All cases have been done!')
     print('----------------------------------------------')
-    print('average space utilization: %.4f'%(avg_ratio/times))
-    print('average put item number: %.4f'%(avg_counter/times))
-    print('average sequence time: %.4f'%(avg_time/times))
-    print('average time per item: %.4f'%(avg_time/avg_counter))
+    
+    # 计算各指标的标准差
+    ratios = np.array(ratios)
+    counters = np.array(counters)
+    times_list = np.array(times_list)
+    
+    std_ratio = np.std(ratios)
+    std_counter = np.std(counters)
+    std_time = np.std(times_list)
+    
+    avg_ratio_val = avg_ratio / times
+    avg_counter_val = avg_counter / times
+    avg_time_val = avg_time / times
+    avg_time_per_item = avg_time / avg_counter
+    std_time_per_item = std_time / avg_counter_val  # 近似计算
+    
+    print('average space utilization: %.4f ± %.4f' % (avg_ratio_val, std_ratio))
+    print('average put item number: %.4f ± %.4f' % (avg_counter_val, std_counter))
+    print('average sequence time: %.4f ± %.4f' % (avg_time_val, std_time))
+    print('average time per item: %.4f ± %.4f' % (avg_time_per_item, std_time_per_item))
     print('----------------------------------------------')
     
     # 计算并输出质心偏移量统计
@@ -95,9 +115,8 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     max_offset = np.max(center_offsets)
     
     print('---------- Center of Mass Statistics ----------')
-    print('Average center offset: %.4f' % avg_offset)
+    print('Average center offset: %.4f ± %.4f' % (avg_offset, std_offset))
     print('Variance of center offset: %.4f' % var_offset)
-    print('Std deviation of center offset: %.4f' % std_offset)
     print('Min center offset: %.4f' % min_offset)
     print('Max center offset: %.4f' % max_offset)
     print('----------------------------------------------')
