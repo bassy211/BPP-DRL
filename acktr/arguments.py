@@ -39,6 +39,12 @@ def get_args():
         '--preview', default=1, type=int, help='the item number agent knows (ignored when training)'
     )
     parser.add_argument(
+        '--reorder-times', default=100, type=int, help='number of reorder search iterations (default: 100)'
+    )
+    parser.add_argument(
+        '--reorder-pos-topk', default=1, type=int, help='top-k positions to consider in reorder search (default: 1)'
+    )
+    parser.add_argument(
         '--item-seq', default='cut1', help='item sequence generators (ignored when testing), cut1|cut2|rs|trajectory'
     )
     parser.add_argument(
