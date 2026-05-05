@@ -6,6 +6,7 @@ import copy
 import numpy as np
 from gym.envs.registration import register
 from acktr.arguments import get_args
+from analysis_plots import run_full_analysis
 
 def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reorder_pos_topk=1):
     env = raw_env.clone_for_search() if hasattr(raw_env, 'clone_for_search') else copy.deepcopy(raw_env)
@@ -120,6 +121,11 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     print('Min center offset: %.4f' % min_offset)
     print('Max center offset: %.4f' % max_offset)
     print('----------------------------------------------')
+    
+    # 导出 JSON 并生成箱线图
+    print('\nExporting results and generating plots...')
+    run_full_analysis(url, data_url, args, ratios, center_offsets,
+                      avg_counter, avg_time, times)
 
 def registration_envs():
     register(

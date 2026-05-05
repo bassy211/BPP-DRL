@@ -49,9 +49,9 @@ class TrajectoryBoxCreator(BoxCreator):
     - 提取物料的长宽高以及质量信息
     - number表示此物料有多少个，放完后才轮到下一个物料
     - 每个轨迹里的物料随机排序
-    - 对每种物料等比例缩小到总数为50
+    - 对每种物料等比例缩小到总数为60
     """
-    def __init__(self, data_name=None, target_total=50):
+    def __init__(self, data_name=None, target_total=60):
         super().__init__()
         self.data_name = data_name
         self.target_total = target_total  # 目标总数
@@ -197,8 +197,10 @@ class LoadBoxCreator(BoxCreator):
     从processed_test.pt加载测试数据的BoxCreator
     数据格式: {"Data": {"DN号": [{"weight":, "depth":, "width":, "height":, "number":}, ...]}}
     或者旧格式: [[[depth, width, height], ...], ...]
+    - 每个轨迹里的物料随机排序
+    - 对每种物料等比例缩小到总数为60
     """
-    def __init__(self, data_name=None, target_total=50):
+    def __init__(self, data_name=None, target_total=60):
         super().__init__()
         self.data_name = data_name
         self.target_total = target_total

@@ -9,7 +9,7 @@ from .binCreator import RandomBoxCreator, LoadBoxCreator, BoxCreator, Trajectory
 class PackingGame(gym.Env):
     def __init__(self, box_creator=None, container_size = (20, 20, 20),
                  box_set = None, data_name = None, test = False,
-                 data_type = 'cut1', enable_rotation=False, target_total=50, use_pusnet=False,
+                 data_type = 'cut1', enable_rotation=False, target_total=60, use_pusnet=False,
                  reward_alpha=1.0, reward_beta=1.0, reward_sigma=0.8, reward_tau=0.8, **kwags):
         self.box_creator = box_creator
         self.bin_size = container_size
