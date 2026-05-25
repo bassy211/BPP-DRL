@@ -29,9 +29,10 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100):
             end = perf_counter()
             print('Time cost:', end-start)
             print('Ratio:', info['ratio'])
-            # 计算质心偏移量
+            # 计算质心偏移量和质心坐标
             center_offset = env.space.get_center_offset()
-            return info['ratio'], info['counter'], end-start, default_counter/box_counter, center_offset
+            center_xy = env.space.calculate_center_of_mass()
+            return info['ratio'], info['counter'], end-start, default_counter/box_counter, center_offset, center_xy
         box_counter += 1
         default_counter += int(default)
 
@@ -56,6 +57,8 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     counters = []
     times_list = []
     center_offsets = []  # 收集质心偏移量
+    com_xs = []  # 收集质心 X 坐标
+    com_ys = []  # 收集质心 Y 坐标
     avg_ratio, avg_counter, avg_time, avg_drate = 0.0, 0.0, 0.0, 0.0
     c_bound = getattr(args, 'reorder_p_bound', pruning_threshold)
     for i in range(times):
@@ -63,7 +66,7 @@ def unified_test(url,  args, pruning_threshold = 0.5):
             print('case', i+1)
         env.reset()
         env.box_creator.preview(500)
-        ratio, counter, time, depen_rate, center_offset = run_sequence(
+        ratio, counter, time, depen_rate, center_offset, center_xy = run_sequence(
             nmodel,
             env,
             args.preview,
@@ -73,6 +76,9 @@ def unified_test(url,  args, pruning_threshold = 0.5):
         avg_ratio += ratio
         ratios.append(ratio)
         center_offsets.append(center_offset)
+        if center_xy is not None:
+            com_xs.append(center_xy[0])
+            com_ys.append(center_xy[1])
         avg_counter += counter
         counters.append(counter)
         avg_time += time
@@ -118,6 +124,14 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     print('Min center offset: %.4f' % min_offset)
     print('Max center offset: %.4f' % max_offset)
     print('----------------------------------------------')
+    
+    # 导出完整分析结果（包含质心坐标信息）
+    try:
+        from analysis_plots import run_full_analysis
+        run_full_analysis(url, data_url, args, ratios, center_offsets,
+                          avg_counter, avg_time, times, com_xs, com_ys)
+    except ImportError:
+        print('analysis_plots module not available for full analysis')
 
 def registration_envs():
     register(
