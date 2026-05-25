@@ -36,7 +36,7 @@ def conf_interval_95(data):
 # 2. JSON 导出
 # ─────────────────────────────────────────
 def export_json(url, data_url, args, ratios, center_offsets,
-                avg_counter, avg_time, times, output_dir, timestamp):
+                com_xs, com_ys, avg_counter, avg_time, times, output_dir, timestamp):
     """将测试结果序列化为 JSON，返回保存路径。"""
     ratios         = np.asarray(ratios)
     center_offsets = np.asarray(center_offsets)
@@ -55,6 +55,7 @@ def export_json(url, data_url, args, ratios, center_offsets,
             "cases":           times,
             "timestamp":       timestamp,
             "env_name":        args.env_name,
+            "container_size":  args.container_size if hasattr(args, 'container_size') else [10, 10, 10],
             "enable_rotation": args.enable_rotation,
         },
         "space_utilization": {
@@ -69,6 +70,10 @@ def export_json(url, data_url, args, ratios, center_offsets,
             "q25":      float(np.percentile(ratios, 25)),
             "median":   float(np.median(ratios)),
             "q75":      float(np.percentile(ratios, 75)),
+        },
+        "center_of_mass": {
+            "xs": np.asarray(com_xs).tolist() if com_xs is not None else [],
+            "ys": np.asarray(com_ys).tolist() if com_ys is not None else []
         },
         "center_offset": {
             "values":   center_offsets.tolist(),
@@ -183,7 +188,7 @@ def plot_single_boxplots(ratios, center_offsets, model_tag, timestamp, output_di
 # 4. 一键调用入口（供 unified_test.py 使用）
 # ─────────────────────────────────────────
 def run_full_analysis(url, data_url, args, ratios, center_offsets,
-                      avg_counter, avg_time, times):
+                      avg_counter, avg_time, times, com_xs=None, com_ys=None):
     """
     计算 95% CI、打印统计摘要、导出 JSON、绘制单模型箱线图。
     在 unified_test.py 中解注释后直接调用即可。
@@ -209,7 +214,7 @@ def run_full_analysis(url, data_url, args, ratios, center_offsets,
     model_tag  = os.path.splitext(os.path.basename(url))[0]
 
     export_json(url, data_url, args, ratios, center_offsets,
-                avg_counter, avg_time, times, output_dir, timestamp)
+                com_xs, com_ys, avg_counter, avg_time, times, output_dir, timestamp)
 
     plot_single_boxplots(ratios, center_offsets, model_tag, timestamp, output_dir)
 
