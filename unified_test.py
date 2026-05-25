@@ -1,5 +1,6 @@
 from time import perf_counter
 from acktr.model_loader import nnModel
+from acktr.heuristic_baselines import HeuristicModel
 from acktr.reorder import ReorderTree
 import gym
 import copy
@@ -33,12 +34,17 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reord
             print('Ratio:', info['ratio'])
             # 计算质心偏移量
             center_offset = env.space.get_center_offset()
-            return info['ratio'], info['counter'], end-start, default_counter/box_counter, center_offset
+            com = env.space.calculate_center_of_mass()
+            com_x, com_y = com if com else (0.0, 0.0)
+            return info['ratio'], info['counter'], end-start, default_counter/box_counter, center_offset, com_x, com_y
         box_counter += 1
         default_counter += int(default)
 
 def unified_test(url,  args, pruning_threshold = 0.5):
-    nmodel = nnModel(url, args)
+    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems']:
+        nmodel = HeuristicModel(args.algorithm, args)
+    else:
+        nmodel = nnModel(url, args)
     data_url = './dataset/' +args.data_name
     env = gym.make(args.env_name,
                     box_set=args.box_size_set,
@@ -58,6 +64,8 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     counters = []
     times_list = []
     center_offsets = []  # 收集质心偏移量
+    com_xs = []
+    com_ys = []
     avg_ratio, avg_counter, avg_time, avg_drate = 0.0, 0.0, 0.0, 0.0
     c_bound = getattr(args, 'reorder_p_bound', pruning_threshold)
     for i in range(times):
@@ -65,7 +73,7 @@ def unified_test(url,  args, pruning_threshold = 0.5):
             print('case', i+1)
         env.reset()
         env.box_creator.preview(500)
-        ratio, counter, time, depen_rate, center_offset = run_sequence(
+        ratio, counter, time, depen_rate, center_offset, com_x, com_y = run_sequence(
             nmodel,
             env,
             args.preview,
@@ -76,6 +84,8 @@ def unified_test(url,  args, pruning_threshold = 0.5):
         avg_ratio += ratio
         ratios.append(ratio)
         center_offsets.append(center_offset)
+        com_xs.append(com_x)
+        com_ys.append(com_y)
         avg_counter += counter
         counters.append(counter)
         avg_time += time
@@ -125,7 +135,7 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     # 导出 JSON 并生成箱线图
     print('\nExporting results and generating plots...')
     run_full_analysis(url, data_url, args, ratios, center_offsets,
-                      avg_counter, avg_time, times)
+                      avg_counter, avg_time, times, com_xs, com_ys)
 
 def registration_envs():
     register(

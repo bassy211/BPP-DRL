@@ -63,7 +63,10 @@ def get_possible_position(observation, container_size):
     return action_mask.reshape((-1,)).tolist()
 
 def get_rotation_mask(observation, container_size):
-    box_info = observation.cpu().numpy()
+    if not isinstance(observation, np.ndarray):
+        box_info = observation.cpu().numpy()
+    else:
+        box_info = observation
     box_info = box_info.reshape((4,-1))
     x = int(box_info[1][0])
     y = int(box_info[2][0])

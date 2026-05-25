@@ -42,7 +42,7 @@ def get_args():
         '--item-seq', default='cut1', help='item sequence generators (ignored when testing), cut1|cut2|rs|trajectory'
     )
     parser.add_argument(
-        '--algorithm', default='acktr', type=str,  help='algorithm used, acktr|ppo|a2c'
+        '--algorithm', default='acktr', type=str,  help='algorithm used, acktr|ppo|a2c|random|first_fit|best_fit|corner_point|extreme_point|ems'
     )
     parser.add_argument(
         '--use-pusnet', action='store_true', default=False,
@@ -242,7 +242,9 @@ def get_args():
     if args.mode == 'train' and not args.load_model:
         print('train new model')
     if args.mode == 'test' and not args.load_model:
-        raise Exception('no trained model chosed')
+        if args.algorithm not in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems']:
+            raise Exception('no trained model chosed')
+        print(f"test heuristic algorithm: {args.algorithm}")
     if args.mode not in ['test', 'train']:
         raise Exception('Unknown option \'%s\''%(args.mode))
     if args.item_seq not in ['cut1', 'rs', 'cut2', 'trajectory']:

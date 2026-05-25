@@ -26,10 +26,19 @@ def main(args):
 
 def test_model(args):
     assert args.test is True
-    model_url = args.load_dir + args.load_name
+    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems']:
+        model_url = None
+    else:
+        model_url = args.load_dir + args.load_name
     unified_test(model_url, args)
 
 def train_model(args):
+    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems']:
+        print(f"Skipping PPO/A2C/ACKTR training since selected algorithm is a heuristic baseline: {args.algorithm}.")
+        # Use unified_test to evaluate heuristic directly
+        unified_test(None, args)
+        return
+
     custom = input('please input the test name: ')
     time_now = time.strftime('%Y.%m.%d-%H-%M', time.localtime(time.time()))
 
