@@ -44,7 +44,7 @@ def export_json(url, data_url, args, ratios, center_offsets,
     ratio_mean,  ratio_ci_lo,  ratio_ci_hi  = conf_interval_95(ratios)
     offset_mean, offset_ci_lo, offset_ci_hi = conf_interval_95(center_offsets)
 
-    model_tag = os.path.splitext(os.path.basename(url))[0]
+    model_tag = f"{getattr(args, 'algorithm', 'heuristic')}" if url is None else os.path.splitext(os.path.basename(url))[0]
     os.makedirs(output_dir, exist_ok=True)
     json_path = os.path.join(output_dir, f'{model_tag}_{timestamp}.json')
 
@@ -211,7 +211,7 @@ def run_full_analysis(url, data_url, args, ratios, center_offsets,
 
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     timestamp  = datetime.now().strftime('%Y%m%d_%H%M%S')
-    model_tag  = os.path.splitext(os.path.basename(url))[0]
+    model_tag = f"{getattr(args, 'algorithm', 'heuristic')}" if url is None else os.path.splitext(os.path.basename(url))[0]
 
     export_json(url, data_url, args, ratios, center_offsets,
                 com_xs, com_ys, avg_counter, avg_time, times, output_dir, timestamp)
