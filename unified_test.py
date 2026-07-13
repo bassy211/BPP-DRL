@@ -41,8 +41,8 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reord
         default_counter += int(default)
 
 def unified_test(url,  args, pruning_threshold = 0.5):
-    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems', 'macs']:
-        nmodel = HeuristicModel(args.algorithm, args)
+    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems', 'macs', 'layer_building']:
+        nmodel = HeuristicModel(args.algorithm, args) if args.algorithm != 'layer_building' else None
     else:
         nmodel = nnModel(url, args)
     data_url = './dataset/' +args.data_name
@@ -73,14 +73,22 @@ def unified_test(url,  args, pruning_threshold = 0.5):
             print('case', i+1)
         env.reset()
         env.box_creator.preview(500)
-        ratio, counter, time, depen_rate, center_offset, com_x, com_y = run_sequence(
-            nmodel,
-            env,
-            args.preview,
-            c_bound,
-            reorder_times=args.reorder_times,
-            reorder_pos_topk=args.reorder_pos_topk,
-        )
+
+        if args.algorithm == 'layer_building':
+            # Offline MILP: solve globally for all items at once
+            from acktr.milp_heuristic import milp_two_phase_pack
+            ratio, counter, elapsed, depen_rate, center_offset, com_x, com_y = \
+                milp_two_phase_pack(env)
+            time_val = elapsed
+        else:
+            ratio, counter, time_val, depen_rate, center_offset, com_x, com_y = run_sequence(
+                nmodel,
+                env,
+                args.preview,
+                c_bound,
+                reorder_times=args.reorder_times,
+                reorder_pos_topk=args.reorder_pos_topk,
+            )
         avg_ratio += ratio
         ratios.append(ratio)
         center_offsets.append(center_offset)
@@ -88,8 +96,8 @@ def unified_test(url,  args, pruning_threshold = 0.5):
         com_ys.append(com_y)
         avg_counter += counter
         counters.append(counter)
-        avg_time += time
-        times_list.append(time)
+        avg_time += time_val
+        times_list.append(time_val)
         avg_drate += depen_rate
 
     print()
@@ -132,10 +140,10 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     print('Max center offset: %.4f' % max_offset)
     print('----------------------------------------------')
     
-    # 导出 JSON 并生成箱线图
-    print('\nExporting results and generating plots...')
-    run_full_analysis(url, data_url, args, ratios, center_offsets,
-                      avg_counter, avg_time, times, com_xs, com_ys)
+    # # 导出 JSON 并生成箱线图
+    # print('\nExporting results and generating plots...')
+    # run_full_analysis(url, data_url, args, ratios, center_offsets,
+    #                   avg_counter, avg_time, times, com_xs, com_ys)
 
 def registration_envs():
     register(
