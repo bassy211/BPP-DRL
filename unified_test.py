@@ -41,8 +41,8 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reord
         default_counter += int(default)
 
 def unified_test(url,  args, pruning_threshold = 0.5):
-    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems', 'macs', 'layer_building']:
-        nmodel = HeuristicModel(args.algorithm, args) if args.algorithm != 'layer_building' else None
+    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems', 'macs', 'layer_building', 'f53']:
+        nmodel = HeuristicModel(args.algorithm, args) if args.algorithm not in ['layer_building', 'f53'] else None
     else:
         nmodel = nnModel(url, args)
     data_url = './dataset/' +args.data_name
@@ -79,6 +79,12 @@ def unified_test(url,  args, pruning_threshold = 0.5):
             from acktr.milp_heuristic import milp_two_phase_pack
             ratio, counter, elapsed, depen_rate, center_offset, com_x, com_y = \
                 milp_two_phase_pack(env)
+            time_val = elapsed
+        elif args.algorithm == 'f53':
+            # Online EMS heuristic (Ali et al., 2024)
+            from acktr.f53_heuristic import f53_online_pack
+            ratio, counter, elapsed, depen_rate, center_offset, com_x, com_y = \
+                f53_online_pack(env)
             time_val = elapsed
         else:
             ratio, counter, time_val, depen_rate, center_offset, com_x, com_y = run_sequence(
