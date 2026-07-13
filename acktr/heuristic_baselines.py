@@ -2,6 +2,48 @@ import numpy as np
 import copy
 from acktr.utils import get_rotation_mask, get_possible_position, check_box
 
+
+def _evaluate_convex_space_2d(heightmap, max_height):
+    """Compute maximum accessible convex space (empty rectangular prism volume)
+    above a 2D heightmap. This is the 3D generalization of MACS's core metric.
+
+    For each sub-rectangle in the X-Y plane, the largest empty rectangular prism
+    above it has footprint (w × d) and height (max_height - floor_h), where
+    floor_h is the maximum height within that sub-rectangle.
+    """
+    W, D = heightmap.shape
+    max_volume = 0
+
+    for x1 in range(W):
+        # rolling column-wise min for fixed x1
+        col_mins = np.full(D, max_height, dtype=int)
+        for x2 in range(x1, W):
+            w = x2 - x1 + 1
+            col_mins = np.minimum(col_mins, heightmap[x2, :])
+            # scan over y ranges with rolling min
+            for y1 in range(D):
+                running_min = max_height
+                for y2 in range(y1, D):
+                    running_min = min(running_min, int(col_mins[y2]))
+                    if running_min >= max_height:
+                        break
+                    d = y2 - y1 + 1
+                    h = max_height - running_min
+                    volume = w * d * h
+                    if volume > max_volume:
+                        max_volume = volume
+    return max_volume
+
+
+def _simulate_placement_2d(plain, lx, ly, bx, by, z):
+    """Return a copy of 'plain' after placing a box of footprint (bx, by)
+    and height z at position (lx, ly)."""
+    new_plain = np.copy(plain)
+    support_h = int(np.max(new_plain[lx:lx + bx, ly:ly + by]))
+    new_plain[lx:lx + bx, ly:ly + by] = support_h + z
+    return new_plain
+
+
 class HeuristicModel:
     def __init__(self, heuristic_type, args):
         self.heuristic_type = heuristic_type
@@ -94,7 +136,18 @@ class HeuristicModel:
                         else: contact += np.sum(np.clip(plain[lx:lx+bx, ly+by], new_h, z_top) - new_h)
                         
                         score = -(new_h * 100000) + contact * 100 - (lx + ly)
-                
+                elif self.heuristic_type == 'macs':
+                    # MACS (Maximum Accessible Convex Space):
+                    # For each candidate placement, simulate the resulting
+                    # heightmap and measure the largest contiguous empty
+                    # rectangular prism that remains.  Pick the placement
+                    # that preserves the most convex free space.
+                    simulated = _simulate_placement_2d(plain, lx, ly, bx, by, z)
+                    remaining = _evaluate_convex_space_2d(
+                        simulated, self.container_size[2])
+                    # small tie-breaker: prefer lower placement height
+                    score = remaining - new_h * 0.01
+
                 if score > best_score:
                     best_score = score
                     best_idx = idx

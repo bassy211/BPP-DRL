@@ -41,7 +41,7 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reord
         default_counter += int(default)
 
 def unified_test(url,  args, pruning_threshold = 0.5):
-    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems']:
+    if args.algorithm in ['random', 'first_fit', 'best_fit', 'corner_point', 'extreme_point', 'ems', 'macs']:
         nmodel = HeuristicModel(args.algorithm, args)
     else:
         nmodel = nnModel(url, args)
