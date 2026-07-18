@@ -125,13 +125,13 @@ def unified_test(url,  args, pruning_threshold = 0.5):
     print('Max center offset: %.4f' % max_offset)
     print('----------------------------------------------')
     
-    # 导出完整分析结果（包含质心坐标信息）
-    try:
-        from analysis_plots import run_full_analysis
-        run_full_analysis(url, data_url, args, ratios, center_offsets,
-                          avg_counter, avg_time, times, com_xs, com_ys)
-    except ImportError:
-        print('analysis_plots module not available for full analysis')
+    # # 导出完整分析结果（包含质心坐标信息）
+    # try:
+    #     from analysis_plots import run_full_analysis
+    #     run_full_analysis(url, data_url, args, ratios, center_offsets,
+    #                       avg_counter, avg_time, times, com_xs, com_ys)
+    # except ImportError:
+    #     print('analysis_plots module not available for full analysis')
 
 def registration_envs():
     register(

@@ -279,7 +279,7 @@ class CNNPro(NNBase):
             init_(nn.Conv2d(64, 64, 3, stride=1, padding=1)),
             nn.ReLU(),
         )
-        pred_len = args.container_size[0] * args.container_size[1]
+        pred_len = args.pallet_size * args.pallet_size
         if args.enable_rotation:
             pred_len = pred_len * 2
             

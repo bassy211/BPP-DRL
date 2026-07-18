@@ -56,7 +56,7 @@ class ACKTR():
         value_loss = advantages.pow(2).mean()
         action_loss = -(advantages.detach() * action_log_probs).mean()
 
-        mask_len = self.args.container_size[0]*self.args.container_size[1]
+        mask_len = self.args.pallet_size * self.args.pallet_size
         mask_len = mask_len * (1+ self.args.enable_rotation)
         pred_mask = pred_mask.reshape((num_steps,num_processes,mask_len))
 

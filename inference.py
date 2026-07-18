@@ -110,7 +110,7 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
             # 尝试可视化
             try:
                 Visualization.visualize_boxes_enhanced(
-                    container_size=(10, 10, 10), 
+                    container_size=env.bin_size, 
                     boxes=boxes_for_vis, 
                     method='pyvista',
                     color_style='modern'

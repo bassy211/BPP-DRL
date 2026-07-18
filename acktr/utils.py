@@ -44,20 +44,29 @@ def get_possible_position(observation, container_size):
     y = int(box_info[2][0])
     z = int(box_info[3][0])
 
-    plain = box_info[0].reshape((container_size[0],container_size[1]))
+    # 使用正方形网格尺寸（取容器长宽的最大值）
+    pallet_size = max(container_size[0], container_size[1])
+    physical_length = container_size[1]
 
-    width = container_size[0]
-    length = container_size[1]
+    plain = box_info[0].reshape((pallet_size, pallet_size))
+
+    width = pallet_size
+    length = pallet_size
 
     action_mask = np.zeros(shape=(width, length), dtype=np.int32)
 
     for i in range(width - x + 1):
         for j in range(length - y + 1):
-            if check_box(plain, x, y, i, j, z, container_size) >= 0:
+            if check_box(plain, x, y, i, j, z, (pallet_size, pallet_size, container_size[2])) >= 0:
                 action_mask[i, j] = 1
+
+    # 硬掩码：将物理容器外的区域（如 12×10 容器中 y≥10 的部分）强制置为无效
+    action_mask[:, physical_length:] = 0
 
     if action_mask.sum() == 0:
         action_mask[:, :] = 1
+        # 仍然保持硬掩码区域无效
+        action_mask[:, physical_length:] = 0
 
     return action_mask.reshape((-1,)).tolist()
 
@@ -68,28 +77,44 @@ def get_rotation_mask(observation, container_size):
     y = int(box_info[2][0])
     z = int(box_info[3][0])
 
-    plain = box_info[0].reshape((container_size[0],container_size[1]))
+    # 使用正方形网格尺寸（取容器长宽的最大值）
+    pallet_size = max(container_size[0], container_size[1])
+    physical_length = container_size[1]
 
-    width = container_size[0]
-    length = container_size[1]
+    plain = box_info[0].reshape((pallet_size, pallet_size))
+
+    width = pallet_size
+    length = pallet_size
 
     action_mask1 = np.zeros(shape=(width, length), dtype=np.int32)
     action_mask2 = np.zeros(shape=(width, length), dtype=np.int32)
 
+    cs = (pallet_size, pallet_size, container_size[2])
     for i in range(width - x + 1):
         for j in range(length - y + 1):
-            if check_box(plain, x, y, i, j, z, container_size) >= 0:
+            if check_box(plain, x, y, i, j, z, cs) >= 0:
                 action_mask1[i, j] = 1
 
     for i in range(width - y + 1):
         for j in range(length - x + 1):
-            if check_box(plain, y, x, i, j, z, container_size) >= 0:
+            if check_box(plain, y, x, i, j, z, cs) >= 0:
                 action_mask2[i, j] = 1
+
+    # 硬掩码：将物理容器外的区域强制置为无效（两个方向都需要）
+    action_mask1[:, physical_length:] = 0
+    action_mask2[:, physical_length:] = 0
 
     action_mask = np.hstack((action_mask1.reshape((-1,)), action_mask2.reshape((-1,))))
 
     if action_mask.sum() == 0:
         action_mask[:] = 1
+        # 仍然保持硬掩码区域无效
+        half = len(action_mask) // 2
+        action_mask1 = action_mask[:half].reshape((pallet_size, pallet_size))
+        action_mask2 = action_mask[half:].reshape((pallet_size, pallet_size))
+        action_mask1[:, physical_length:] = 0
+        action_mask2[:, physical_length:] = 0
+        action_mask = np.hstack((action_mask1.reshape((-1,)), action_mask2.reshape((-1,))))
 
     return action_mask
 
