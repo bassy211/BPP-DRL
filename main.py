@@ -126,7 +126,7 @@ def train_model(args):
                               actor_critic.recurrent_hidden_state_size,
                               can_give_up=False,
                               enable_rotation=args.enable_rotation,
-                              pallet_size=args.container_size[0],
+                              pallet_size=args.pallet_size,
                               use_pusnet=args.use_pusnet)
 
     obs = envs.reset()

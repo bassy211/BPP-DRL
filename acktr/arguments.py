@@ -10,7 +10,7 @@ def get_args():
        '--env_name', default='Bpp-v0', type=str, help='bin packing environment name'
     )
     parser.add_argument(
-       '--container_size', default=(10, 10, 10), type=int, help='container size along x, y and z axis'
+       '--container_size', default=(12, 10, 10), type=int, help='physical container size along x, y and z axis'
     )
     parser.add_argument(
         '--enable-rotation', action='store_true', default=False, help='Whether agent can rotate boxes'
@@ -204,7 +204,11 @@ def get_args():
 
     args.device = "cuda:" + str(args.device) if args.use_cuda else "cpu"
     args.bin_size = args.container_size
-    args.pallet_size = args.container_size[0]
+    # pallet_size: 正方形网格尺寸，取容器长宽的最大值
+    # 例如容器 12×10×10 → pallet_size=12，形成 12×12 网格，12×2 区域通过硬掩码过滤
+    args.pallet_size = max(args.container_size[0], args.container_size[1])
+    args.physical_width = args.container_size[0]
+    args.physical_length = args.container_size[1]
     args.channel = 4 # legacy hmap + size maps channel count
     args.data_type = args.item_seq
     args.test = (args.mode == 'test')

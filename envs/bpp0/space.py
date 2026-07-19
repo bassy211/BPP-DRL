@@ -37,8 +37,12 @@ class Box(object):
 
 
 class Space(object):
-    def __init__(self, width=10, length=10, height=10):
+    def __init__(self, width=10, length=10, height=10, physical_width=None, physical_length=None):
+        # plain_size: 内部网格表示的尺寸（正方形，如12×12）
         self.plain_size = np.array([width, length, height])
+        # 物理容器的实际宽/长（如12×10），用于check_box边界检查和体积计算
+        self.physical_width = physical_width if physical_width is not None else width
+        self.physical_length = physical_length if physical_length is not None else length
         self.plain = np.zeros(shape=(width, length), dtype=np.int32)
         self.occupancy = np.zeros(shape=(width, length, height), dtype=np.int8)
         self.boxes = []
@@ -50,7 +54,8 @@ class Space(object):
         print(self.plain)
 
     def clone(self):
-        new_space = Space(int(self.plain_size[0]), int(self.plain_size[1]), int(self.plain_size[2]))
+        new_space = Space(int(self.plain_size[0]), int(self.plain_size[1]), int(self.plain_size[2]),
+                         physical_width=int(self.physical_width), physical_length=int(self.physical_length))
         new_space.plain = np.array(self.plain, copy=True)
         new_space.occupancy = np.array(self.occupancy, copy=True)
         new_space.boxes = [box.clone() for box in self.boxes]
@@ -279,9 +284,9 @@ class Space(object):
             return 0.0
         
         com_x, com_y = com
-        # 容器几何中心
-        container_center_x = self.plain_size[0] / 2.0
-        container_center_y = self.plain_size[1] / 2.0
+        # 容器几何中心（使用物理容器尺寸）
+        container_center_x = self.physical_width / 2.0
+        container_center_y = self.physical_length / 2.0
         
         # 计算欧氏距离
         offset = np.sqrt((com_x - container_center_x)**2 + (com_y - container_center_y)**2)
@@ -308,11 +313,11 @@ class Space(object):
             metrics['center_offset'] = self.get_center_offset()
             
             # 几何中心
-            container_center = (self.plain_size[0] / 2.0, self.plain_size[1] / 2.0)
+            container_center = (self.physical_width / 2.0, self.physical_length / 2.0)
             metrics['container_center'] = container_center
             
             # 相对偏移率
-            max_offset = np.sqrt((self.plain_size[0]/2)**2 + (self.plain_size[1]/2)**2)
+            max_offset = np.sqrt((self.physical_width/2)**2 + (self.physical_length/2)**2)
             metrics['relative_offset_ratio'] = metrics['center_offset'] / max_offset
         
         # 质量分布统计
@@ -433,7 +438,8 @@ class Space(object):
     #     return guad
 
     def check_box(self, plain, x, y, lx, ly, z):
-        if lx+x > self.plain_size[0] or ly+y > self.plain_size[1]:
+        # 检查物理容器边界
+        if lx+x > self.physical_width or ly+y > self.physical_length:
             return -1
         if lx < 0 or ly < 0:
             return -1
@@ -469,8 +475,8 @@ class Space(object):
 
     def get_ratio(self):
         vo = reduce(lambda x, y: x+y, [box.x * box.y * box.z for box in self.boxes], 0.0)
-        mx = self.plain_size[0] * self.plain_size[1] * self.plain_size[2]
-        ratio = vo / mx
+        physical_volume = self.physical_width * self.physical_length * self.plain_size[2]
+        ratio = vo / physical_volume
         assert ratio <= 1.0
         return ratio
 

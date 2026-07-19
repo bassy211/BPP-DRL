@@ -13,8 +13,16 @@ class PackingGame(gym.Env):
                  reward_alpha=1.0, reward_beta=1.0, reward_sigma=0.8, reward_tau=0.8, **kwags):
         self.box_creator = box_creator
         self.bin_size = container_size
-        self.area = int(self.bin_size[0] * self.bin_size[1])
-        self.space = Space(*self.bin_size)
+        # 物理容器尺寸
+        self.physical_width = container_size[0]
+        self.physical_length = container_size[1]
+        # 正方形网格尺寸：取长宽最大值，形成 pallet_size×pallet_size 的网格
+        self.pallet_size = max(container_size[0], container_size[1])
+        # 动作空间面积 = 正方形网格的单元格数
+        self.area = int(self.pallet_size * self.pallet_size)
+        # 创建空间：内部网格为 pallet_size×pallet_size，物理边界为实际容器尺寸
+        self.space = Space(self.pallet_size, self.pallet_size, container_size[2],
+                          physical_width=self.physical_width, physical_length=self.physical_length)
         self.can_rotate = enable_rotation
         self.use_pusnet = use_pusnet
         self.buffer = []
@@ -78,7 +86,8 @@ class PackingGame(gym.Env):
 
     def get_box_ratio(self):
         coming_box = self.next_box
-        return (coming_box[0] * coming_box[1] * coming_box[2]) / (self.space.plain_size[0] * self.space.plain_size[1] * self.space.plain_size[2])
+        physical_volume = float(self.physical_width * self.physical_length * self.bin_size[2])
+        return (coming_box[0] * coming_box[1] * coming_box[2]) / physical_volume
 
 
     def get_box_plain(self):
@@ -89,7 +98,8 @@ class PackingGame(gym.Env):
 
     def reset(self):
         self.box_creator.reset()
-        self.space = Space(*self.bin_size)
+        self.space = Space(self.pallet_size, self.pallet_size, self.bin_size[2],
+                          physical_width=self.physical_width, physical_length=self.physical_length)
         self.buffer = []
         self.current_step = 0
         self.box_creator.generate_box_size()
@@ -118,7 +128,7 @@ class PackingGame(gym.Env):
         self.box_creator.generate_box_size()
 
     def _compute_reward(self, wasted_before, wasted_after):
-        total_vol = float(self.space.plain_size[0] * self.space.plain_size[1] * self.space.plain_size[2])
+        total_vol = float(self.physical_width * self.physical_length * self.bin_size[2])
         cur = self.next_box
         r_v = float(cur[0] * cur[1] * cur[2]) / total_vol
         packed_vol = sum([b.x * b.y * b.z for b in self.space.boxes])
@@ -136,8 +146,8 @@ class PackingGame(gym.Env):
         if plain is None:
             plain = self.space.plain
 
-        width = self.space.plain_size[0]
-        length = self.space.plain_size[1]
+        width = self.pallet_size
+        length = self.pallet_size
 
         action_mask = np.zeros(shape=(width, length), dtype=np.int32)
         
@@ -146,8 +156,13 @@ class PackingGame(gym.Env):
                 if self.space.check_box(plain, x, y, i, j, z) >= 0:
                     action_mask[i, j] = 1
 
+        # 硬掩码：将物理上不可放置的区域（12×10容器中 y≥10 的部分）直接置0
+        action_mask[:, self.physical_length:] = 0
+
         if action_mask.sum() == 0:
             action_mask[:, :] = 1
+            # 仍然保持硬掩码区域无效
+            action_mask[:, self.physical_length:] = 0
         
         return action_mask
 

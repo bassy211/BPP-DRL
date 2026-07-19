@@ -8,7 +8,7 @@ from acktr.utils import get_rotation_mask, get_possible_position
 
 class nnModel(object):
     def __init__(self, url, args):
-        area = args.container_size[0]*args.container_size[1]
+        area = args.pallet_size * args.pallet_size
         self.use_pusnet = bool(getattr(args, 'use_pusnet', False))
         self.enable_rotation = bool(getattr(args, 'enable_rotation', False))
         self.container_size = tuple(args.container_size)
