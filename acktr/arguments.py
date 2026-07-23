@@ -10,7 +10,7 @@ def get_args():
        '--env_name', default='Bpp-v0', type=str, help='bin packing environment name'
     )
     parser.add_argument(
-       '--container_size', default=(12, 10, 10), type=int, help='physical container size along x, y and z axis'
+       '--container_size', default=(12, 8, 10), type=int, help='physical container size along x, y and z axis'
     )
     parser.add_argument(
         '--enable-rotation', action='store_true', default=False, help='Whether agent can rotate boxes'
