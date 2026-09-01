@@ -10,7 +10,11 @@ def get_args():
        '--env_name', default='Bpp-v0', type=str, help='bin packing environment name'
     )
     parser.add_argument(
-       '--container_size', default=(12, 8, 10), type=int, help='physical container size along x, y and z axis'
+       '--container_size', default=(12, 10, 10), type=int, help='physical container size along x, y and z axis'
+    )
+    parser.add_argument(
+        '--random-trajectory', action='store_true', default=False,
+        help='randomly pick a trajectory from the test dataset instead of the sequential first one'
     )
     parser.add_argument(
         '--enable-rotation', action='store_true', default=False, help='Whether agent can rotate boxes'
@@ -128,6 +132,11 @@ def get_args():
     )
     parser.add_argument(
         '--target-total', default=60, type=int, help='the target total number of items after scaling'
+    )
+    parser.add_argument(
+        '--effective_container_size', nargs=3, type=int, default=None,
+        help='effective physical container size (width, length, height); used for '
+             'visualization when the grid is padded (default: same as --container_size)'
     )
     parser.add_argument(
         '--reorder-times', default=160, type=int,

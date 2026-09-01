@@ -292,6 +292,18 @@ class Space(object):
         offset = np.sqrt((com_x - container_center_x)**2 + (com_y - container_center_y)**2)
         
         return offset
+
+    def get_relative_offset_ratio(self):
+        """
+        计算归一化质心偏移率（0~1 之间），可直接作为百分比展示。
+        归一化基准 = 质心可能的最大偏移（容器中心到角落的距离），
+        因此该比值可跨容器尺寸比较，也能正确反映“偏移程度”。
+        """
+        offset = self.get_center_offset()
+        max_offset = np.sqrt((self.physical_width / 2.0) ** 2 + (self.physical_length / 2.0) ** 2)
+        if max_offset <= 0.0:
+            return 0.0
+        return offset / max_offset
     
     def get_stability_metrics(self):
         """
@@ -316,9 +328,8 @@ class Space(object):
             container_center = (self.physical_width / 2.0, self.physical_length / 2.0)
             metrics['container_center'] = container_center
             
-            # 相对偏移率
-            max_offset = np.sqrt((self.physical_width/2)**2 + (self.physical_length/2)**2)
-            metrics['relative_offset_ratio'] = metrics['center_offset'] / max_offset
+            # 相对偏移率（归一化质心偏移，0~1）
+            metrics['relative_offset_ratio'] = self.get_relative_offset_ratio()
         
         # 质量分布统计
         masses = [box.mass for box in self.boxes]

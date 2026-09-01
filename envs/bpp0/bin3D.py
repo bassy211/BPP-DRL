@@ -202,7 +202,8 @@ class PackingGame(gym.Env):
             info = {
                 'counter': len(self.space.boxes),
                 'ratio': self.space.get_ratio(),
-                'center_offset': self.space.get_center_offset(),
+                'center_offset': self.space.get_relative_offset_ratio(),  # 归一化偏移率(0~1)
+                'center_offset_raw': self.space.get_center_offset(),      # 绝对偏移(格子)
                 'buffer_size': len(self.buffer),
                 'succeeded': succeeded,
                 'unpack_check': unpack_check,
@@ -219,7 +220,7 @@ class PackingGame(gym.Env):
         if not succeeded:
             reward = 0.0
             done = True
-            info = {'counter':len(self.space.boxes), 'ratio':self.space.get_ratio(), 'center_offset':self.space.get_center_offset(), 'mask':np.ones(shape=self.act_len)}
+            info = {'counter':len(self.space.boxes), 'ratio':self.space.get_ratio(), 'center_offset':self.space.get_relative_offset_ratio(), 'center_offset_raw':self.space.get_center_offset(), 'mask':np.ones(shape=self.act_len)}
             return self.cur_observation, reward, done, info
 
         box_ratio = self.get_box_ratio()
@@ -232,6 +233,7 @@ class PackingGame(gym.Env):
         info = dict()
         info['counter'] = len(self.space.boxes)
         info['ratio'] = self.space.get_ratio()
-        info['center_offset'] = self.space.get_center_offset()
+        info['center_offset'] = self.space.get_relative_offset_ratio()  # 归一化偏移率(0~1)
+        info['center_offset_raw'] = self.space.get_center_offset()      # 绝对偏移(格子)
         return self.cur_observation, reward, done, info
 

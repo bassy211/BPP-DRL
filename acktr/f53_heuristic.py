@@ -195,7 +195,7 @@ def f53_online_pack(env):
     container_volume = container_w * container_l * container_h
     ratio = total_volume / container_volume
 
-    center_offset = env.space.get_center_offset() if hasattr(env.space, 'get_center_offset') else 0.0
+    center_offset = env.space.get_relative_offset_ratio() if hasattr(env.space, 'get_relative_offset_ratio') else 0.0
     com = env.space.calculate_center_of_mass() if hasattr(env.space, 'calculate_center_of_mass') else None
     com_x, com_y = com if com else (0.0, 0.0)
 

@@ -32,8 +32,10 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound, reorder_times=100, reord
             end = perf_counter()
             print('Time cost:', end-start)
             print('Ratio:', info['ratio'])
-            # 计算质心偏移量
-            center_offset = env.space.get_center_offset()
+            # 计算质心偏移量（归一化比值 0~1，便于跨容器比较）
+            center_offset = (env.space.get_relative_offset_ratio()
+                             if hasattr(env.space, 'get_relative_offset_ratio')
+                             else env.space.get_center_offset())
             com = env.space.calculate_center_of_mass()
             com_x, com_y = com if com else (0.0, 0.0)
             return info['ratio'], info['counter'], end-start, default_counter/box_counter, center_offset, com_x, com_y

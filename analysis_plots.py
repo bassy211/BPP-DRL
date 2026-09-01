@@ -127,7 +127,7 @@ def plot_single_boxplots(ratios, center_offsets, model_tag, timestamp, output_di
     for ax, data, ylabel, subtitle in zip(
         axes,
         [ratios, center_offsets],
-        ['Space Utilization Ratio', 'Center-of-Mass Offset'],
+        ['Space Utilization Ratio', 'Center-of-Mass Offset Ratio'],
         ['(a) Space Utilization',   '(b) CoM Stability'],
     ):
         ax.boxplot(

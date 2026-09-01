@@ -225,7 +225,7 @@ def milp_two_phase_pack(env, time_limit_s=30):
     ratio = total_volume / container_volume
 
     # Compute stability metrics
-    center_offset = env.space.get_center_offset() if hasattr(env.space, 'get_center_offset') else 0.0
+    center_offset = env.space.get_relative_offset_ratio() if hasattr(env.space, 'get_relative_offset_ratio') else 0.0
     com = env.space.calculate_center_of_mass() if hasattr(env.space, 'calculate_center_of_mass') else None
     com_x, com_y = com if com else (0.0, 0.0)
 
