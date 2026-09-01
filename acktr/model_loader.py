@@ -6,6 +6,18 @@ from acktr.model import Policy
 from acktr.utils import get_rotation_mask, get_possible_position
 
 
+def normalize_state_dict(state_dict):
+    """将 checkpoint 中的参数名归一化为当前 Policy 模型的命名风格：
+    去除 module./add_bias. 前缀、把 _bias 改成 bias，并压缩多余维度。"""
+    load_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+    load_dict = {k.replace('add_bias.', ''): v for k, v in load_dict.items()}
+    load_dict = {k.replace('_bias', 'bias'): v for k, v in load_dict.items()}
+    for k, v in load_dict.items():
+        if len(v.size()) <= 3:
+            load_dict[k] = v.squeeze(dim=-1)
+    return load_dict
+
+
 class nnModel(object):
     def __init__(self, url, args):
         area = args.pallet_size * args.pallet_size
@@ -23,14 +35,7 @@ class nnModel(object):
         actor_critic = Policy(obs_shape=observation_space.shape, action_space=action_space, base_kwargs={'recurrent': False, 'hidden_size': args.hidden_size, 'args': args})
         # print(actor_critic)
 
-        load_dict = {k.replace('module.', ''): v for k, v in model_pretrained.items()}
-        load_dict = {k.replace('add_bias.', ''): v for k, v in load_dict.items()}
-        load_dict = {k.replace('_bias', 'bias'): v for k, v in load_dict.items()}
-
-        for k, v in load_dict.items():
-            if len(v.size()) <= 3:
-                load_dict[k] = v.squeeze(dim=-1)
-
+        load_dict = normalize_state_dict(model_pretrained)
         actor_critic.load_state_dict(load_dict)
         actor_critic = actor_critic.to(self.device)
         return actor_critic

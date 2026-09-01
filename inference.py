@@ -1,22 +1,39 @@
+# python inference.py --load-name proce_bin1208.pt --data-name processed_test.pt --enable-rotation --target_total_boxes 60 --random-trajectory
+# python inference.py --load-name proce_bin1210.pt --data-name processed_test.pt --enable-rotation --target_total_boxes 80 --random-trajectory
+# python inference.py --data-name cut_1.pt --load-name cut1.pt --enable-rotation --random-trajectory
+
+
+
+import os
+# PyTorch(MKL) 与 matplotlib 同时加载时会触发 OpenMP 运行时重复初始化
+# （OMP Error #15），必须在任何第三方库导入之前设置
+os.environ.setdefault('KMP_DUPLICATE_LIB_OK', 'TRUE')
+
 from time import perf_counter
-from acktr.model_loader import nnModel
+from acktr.model_loader import nnModel, normalize_state_dict
 from acktr.reorder import ReorderTree
 import gym
 from gym.envs.registration import register
 import copy
-import numpy as np
+import torch
 from acktr.arguments import get_args
 import random
-import Visualization
+# 复用 visualize_packing.py 中的顶刊风格 matplotlib 3D 可视化
+import Visualization as vp
 
 # 模型配置
-DEFAULT_MODEL_PATH = 'pretrained_models/default_cut_1.pt'
+DEFAULT_MODEL_PATH = 'pretrained_models/best.pt'
 
 def registration_envs():
-    register(
-        id='Bpp-v0',
-        entry_point='envs.bpp0:PackingGame', 
-    )
+    """注册环境到Gym"""
+    try:
+        register(
+            id='Bpp-v0',
+            entry_point='envs.bpp0:PackingGame',
+        )
+        print("环境注册成功")
+    except gym.error.Error:
+        print("环境已经注册")
 
 def generate_real_time_box():
     depth = random.randint(2, 5)
@@ -48,11 +65,16 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
             
             # 获取质心偏移量（稳定性指标）
             center_offset = info.get('center_offset', 0.0)
+            center_offset_raw = info.get('center_offset_raw', 0.0)  # 原始绝对偏移量（调试参考）
             
-            # 将盒子数据转换为可视化函数需要的格式
+            # 将盒子数据转换为 visualize_packing 需要的格式
+            # (dx, dy, dz, lx, ly, lz, mass, density, rotation)
             boxes_for_vis = []
-            for box in env.space.boxes:
-                boxes_for_vis.append((box.x, box.y, box.z, box.lx, box.ly, box.lz))
+            for i, box in enumerate(env.space.boxes):
+                rot = env.space.flags[i] if i < len(env.space.flags) else 0
+                mass = getattr(box, 'mass', 0.0)
+                density = getattr(box, 'density', 0.0)
+                boxes_for_vis.append((box.x, box.y, box.z, box.lx, box.ly, box.lz, mass, density, rot))
             
             # 输出所有盒子的信息及其放置位置
             print(f"\n 最终放置结果 (共{len(env.space.boxes)}个盒子):")
@@ -65,73 +87,91 @@ def run_sequence(nmodel, raw_env, preview_num, c_bound):
             
             # 输出稳定性分析
             print(f"\n 稳定性分析:")
-            
-            # 计算质心位置
-            com = env.space.calculate_center_of_mass()
-            if com:
-                com_x, com_y = com
-                container_center_x = env.space.plain_size[0] / 2.0
-                container_center_y = env.space.plain_size[1] / 2.0
-                
-                print(f"  容器几何中心: ({container_center_x:.2f}, {container_center_y:.2f})")
-                print(f"  实际质心位置: ({com_x:.2f}, {com_y:.2f})")
-                print(f"  质心偏移量: {center_offset:.4f}")
-                print(f"  相对偏移率: {(center_offset / container_center_x * 100):.2f}%")
-                
-                # 计算质量分布统计
-                total_mass = sum(box.mass for box in env.space.boxes)
-                avg_mass = total_mass / len(env.space.boxes)
-                mass_std = np.std([box.mass for box in env.space.boxes])
-                print(f"\n 质量分布:")
-                print(f"  总质量: {total_mass:.2f}")
-                print(f"  平均质量: {avg_mass:.2f}")
-                print(f"  质量标准差: {mass_std:.2f}")
-            
-            # 稳定性评级
-            print(f"\n 稳定性评级:")
-            if center_offset < 0.3:
+            print(f"  质心偏移量: {center_offset * 100:.2f}%  (原始绝对值: {center_offset_raw:.4f})")
+            if center_offset < 0.05:
                 stability_level = "优秀 ✓"
-                stability_desc = "质心位置非常接近几何中心，稳定性极佳"
-            elif center_offset < 0.5:
+            elif center_offset < 0.10:
                 stability_level = "良好"
-                stability_desc = "质心位置较为居中，稳定性良好"
-            elif center_offset < 0.7:
+            elif center_offset < 0.20:
                 stability_level = "一般"
-                stability_desc = "质心有一定偏移，建议优化布局"
             else:
                 stability_level = "较差 ✗"
-                stability_desc = "质心偏移较大，需要重新优化布局"
-            print(f"  等级: {stability_level}")
-            print(f"  说明: {stability_desc}")
+            print(f"  稳定性等级: {stability_level}")
             
-            # 可选：打印完整的稳定性报告（取消注释以启用）
-            # env.space.print_stability_report()
-            
-            # 尝试可视化
+            # 尝试可视化（复用 visualize_packing.py 的顶刊风格 matplotlib 3D 可视化）
             try:
-                Visualization.visualize_boxes_enhanced(
-                    container_size=env.bin_size, 
-                    boxes=boxes_for_vis, 
-                    method='pyvista',
-                    color_style='modern'
+                container_size = tuple(env.bin_size)
+                title = ('BPP Packing Result | container %dx%dx%d | ratio %.1f%% | %d boxes | center offset %.2f%%'
+                         % (container_size[0], container_size[1], container_size[2],
+                            info['ratio'] * 100, len(env.space.boxes), center_offset * 100))
+                os.makedirs('results', exist_ok=True)
+                from datetime import datetime
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                vp.visualize_packing(
+                    container_size=container_size,
+                    boxes=boxes_for_vis,
+                    title=title,
+                    out_path=os.path.join('results', 'packing_inference_%s.png' % ts),
+                    labels=False,
+                    show=False,
+                    effective_container_size=env.effective_container_size,
                 )
             except Exception as vis_error:
                 print(f" 可视化失败: {vis_error}")
             
-            return info['ratio'], info['counter'], end - start, default_counter / box_counter, center_offset
+            return info['ratio'], info['counter'], end - start, default_counter / box_counter, center_offset, center_offset_raw
         
+def check_model_compat(model_path, args):
+    """校验模型所需的容器尺寸/旋转配置与当前命令行参数是否一致"""
+    try:
+        ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
+        sd = ckpt[0] if isinstance(ckpt, (list, tuple)) else ckpt
+        sd = normalize_state_dict(sd)
+
+        alen = sd['dist.linear.weight'].shape[0]      # 模型动作空间大小
+        mask_in = sd['base.mask.3.weight'].shape[1]   # mask 输入通道 = 8 * pallet^2
+        pallet = int(round((mask_in / 8) ** 0.5))
+        area = pallet * pallet
+        needs_rot = (alen == area * 2)
+
+        cur_area = args.container_size[0] * args.container_size[1]
+        if cur_area != area:
+            print(f'  [警告] 模型要求容器面积 {area} ({pallet}x{pallet})，'
+                  f'当前 --container-size {tuple(args.container_size)} 面积 {cur_area}。'
+                  f'请使用 --container-size {pallet} {pallet} {args.container_size[2]}')
+        if needs_rot and not args.enable_rotation:
+            print('  [警告] 该模型启用了旋转，请加上 --enable-rotation')
+        if not needs_rot and args.enable_rotation:
+            print(f'  [警告] 该模型未启用旋转（动作空间 {alen}），而当前开启了 --enable-rotation'
+                  f'（会把动作空间扩为 {cur_area * 2}），加载将失败。'
+                  f'请去掉 --enable-rotation，或换用支持旋转的模型（如 --load-name cut1.pt）。')
+        return area, pallet, needs_rot
+    except Exception as e:
+        print(f'  [提示] 无法校验模型配置（将按当前参数尝试加载）: {e}')
+        return None, None, None
+
 def inference(url, args, pruning_threshold=0.5):
+    check_model_compat(url, args)
     nmodel = nnModel(url, args)
+    
+    # 使用预生成的数据集文件（默认 cut_1.pt，可用 --data-name 切换 cut_2.pt / rs.pt / processed_test.pt 等）
+    data_name = os.path.join('./dataset/', args.data_name)
         
     env = gym.make(args.env_name,
                    box_set=args.box_size_set,
                    container_size=args.container_size,
                    enable_rotation=args.enable_rotation,
-                   data_type=args.data_type, 
-                   infer=True)           
+                   data_type=args.data_type,
+                   data_name=data_name,
+                   target_total=args.target_total_boxes,
+                   test=True)
+    # 环境本身不存储 effective_container_size（被构造器 **kwargs 吞掉），
+    # 这里显式挂到 env 上，供 run_sequence 可视化时使用
+    env.effective_container_size = args.effective_container_size
 
     print('  环境名称:', args.env_name)
     print('  模型路径:', url)
+    print('  数据集文件:', data_name)
     # print('  剪枝阈值:', pruning_threshold)
     print('  预览盒子数量:', args.preview)
     print('  容器尺寸:', args.container_size)
@@ -139,8 +179,18 @@ def inference(url, args, pruning_threshold=0.5):
     c_bound = pruning_threshold
     env.reset()
     
+    # 可选：随机选取一条轨迹进行推理
+    # 默认测试模式按顺序取数据集第一条轨迹，导致每次推理配置/结果相同；
+    # 加上 --random-trajectory 后每次随机抽取一条轨迹（不同运行结果不同）。
+    if args.random_trajectory:
+        traj_nums = getattr(env.box_creator, 'traj_nums', 1)
+        traj_idx = random.randrange(traj_nums)
+        print('  随机选取轨迹: %d / %d' % (traj_idx + 1, traj_nums))
+        env.box_creator.reset(index=traj_idx)
+        env.box_creator.generate_box_size()
+    
     try:
-        ratio, counter, time, depen_rate, center_offset = run_sequence(nmodel, env, args.preview, c_bound)
+        ratio, counter, time, depen_rate, center_offset, center_offset_raw = run_sequence(nmodel, env, args.preview, c_bound)
 
         print()
         print('----------------------------------------------')
@@ -151,21 +201,7 @@ def inference(url, args, pruning_threshold=0.5):
         print('  平均每个盒子耗时: %.4f 秒' % (time / counter if counter > 0 else 0))
         print('----------------------------------------------')
         print('  稳定性指标:')
-        print('  质心偏移量: %.4f' % center_offset)
-        
-        # 计算稳定性得分 (0-100分)
-        max_offset = np.sqrt(2) * env.space.plain_size[0] / 2.0  # 理论最大偏移
-        stability_score = max(0, 100 * (1 - center_offset / max_offset))
-        print('  稳定性得分: %.2f/100' % stability_score)
-        
-        if center_offset < 0.3:
-            print('  稳定性评级: 优秀 ✓')
-        elif center_offset < 0.5:
-            print('  稳定性评级: 良好')
-        elif center_offset < 0.7:
-            print('  稳定性评级: 一般')
-        else:
-            print('  稳定性评级: 较差 ✗')
+        print('  质心偏移量: %.2f%%  (原始绝对值: %.4f)' % (center_offset * 100, center_offset_raw))
         print('----------------------------------------------')
     except Exception as e:
         print(f" 出现错误: {e}")
@@ -176,5 +212,6 @@ if __name__ == '__main__':
     registration_envs()
     args = get_args()
     pruning_threshold = 0.5
-    # 使用配置的默认模型路径
-    inference(DEFAULT_MODEL_PATH, args, pruning_threshold)
+    # 模型路径由 --load-dir / --load-name 控制（默认 ./pretrained_models/best.pt）
+    model_path = os.path.join(args.load_dir, args.load_name)
+    inference(model_path, args, pruning_threshold)
